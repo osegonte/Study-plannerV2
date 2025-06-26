@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import React, { useCallback, useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Upload, FileText, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import { apiClient } from '@/utils/api'
@@ -21,7 +21,7 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
   const [connectionTest, setConnectionTest] = useState<'pending' | 'success' | 'error'>('pending')
 
   // Test backend connection when component mounts
-  React.useEffect(() => {
+  useEffect(() => {
     apiClient.checkHealth()
       .then(() => setConnectionTest('success'))
       .catch(() => setConnectionTest('error'))

@@ -1,4 +1,3 @@
-// Fixed BasicReadingController.ts
 import { Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { DatabaseService } from '../services/DatabaseService'
@@ -8,15 +7,19 @@ export class BasicReadingController {
   private dbService: DatabaseService
 
   constructor() {
-    // Use singleton instance
+    // Get singleton instance - DO NOT call initialize here
     this.dbService = DatabaseService.getInstance()
-    this.dbService.initialize()
   }
 
   // Stage 2: Basic reading session tracking
   async saveReadingSession(req: Request, res: Response) {
     const { pdfId, page, startTime, endTime, duration } = req.body
     const sessionId = uuidv4()
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
 
     // Save basic reading session
@@ -43,6 +46,10 @@ export class BasicReadingController {
 
   // Stage 2: Simple progress calculation
   private async updateBasicProgress(pdfId: string) {
+    if (!this.dbService.isInitialized()) {
+      throw new Error('Database not initialized')
+    }
+    
     const db = this.dbService.getDatabase()
 
     await new Promise<void>((resolve, reject) => {
@@ -72,6 +79,11 @@ export class BasicReadingController {
   // Stage 2: Basic reading statistics (no complex analytics)
   async getBasicReadingStats(req: Request, res: Response) {
     const { pdfId } = req.params
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
 
     // Get basic stats
@@ -118,6 +130,11 @@ export class BasicReadingController {
   // Stage 2: Get reading sessions (simple list)
   async getReadingSessions(req: Request, res: Response) {
     const { pdfId } = req.params
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
 
     const sessions = await new Promise<any[]>((resolve, reject) => {
@@ -145,6 +162,11 @@ export class BasicReadingController {
   // Stage 2: Get reading progress (simple data)
   async getReadingProgress(req: Request, res: Response) {
     const { pdfId } = req.params
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
 
     const progress = await new Promise<any>((resolve, reject) => {

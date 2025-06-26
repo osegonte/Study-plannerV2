@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import { ChevronLeft, ChevronRight, RotateCcw, ZoomIn, ZoomOut, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useReadingTimer } from '@/hooks/useReadingTimer'
 import { usePDF } from '@/contexts/PDFContext'
 import { apiClient } from '@/utils/api'
 
-// Set up PDF.js worker with multiple fallbacks
+// Set up PDF.js worker with fallbacks
 const workerSources = [
   new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString(),
   `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
@@ -36,45 +36,44 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState<number>(0)
-  const [fileUrl, setFileUrl] = useState<string>('')
   
   const { startTimer, stopTimer, isRunning, formattedTime } = useReadingTimer()
   const { dispatch } = usePDF()
+  
+  // Refs to prevent multiple requests
+  const fileUrlRef = useRef<string>('')
+  const sessionSaveInProgress = useRef<boolean>(false)
+  const lastSessionSave = useRef<number>(0)
 
-  // Set up file URL
-  useEffect(() => {
+  // Memoize file URL to prevent excessive requests
+  const fileUrl = useMemo(() => {
     if (typeof file === 'string') {
-      setFileUrl(file)
-      console.log('PDF URL set to:', file)
+      // Cache the URL to prevent multiple requests
+      if (!fileUrlRef.current || fileUrlRef.current !== file) {
+        fileUrlRef.current = file
+        console.log('PDF URL cached:', file)
+      }
+      return fileUrlRef.current
     } else if (file instanceof File) {
-      const url = URL.createObjectURL(file)
-      setFileUrl(url)
-      console.log('PDF blob URL created:', url)
-      
-      return () => {
-        URL.revokeObjectURL(url)
+      // Only create blob URL once
+      if (!fileUrlRef.current) {
+        fileUrlRef.current = URL.createObjectURL(file)
+        console.log('PDF blob URL created and cached:', fileUrlRef.current)
+      }
+      return fileUrlRef.current
+    }
+    return ''
+  }, [file])
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (fileUrlRef.current && file instanceof File) {
+        URL.revokeObjectURL(fileUrlRef.current)
         console.log('PDF blob URL revoked')
       }
     }
   }, [file])
-
-  // Test file accessibility
-  useEffect(() => {
-    if (fileUrl && typeof file === 'string') {
-      // Test if the URL is accessible
-      fetch(fileUrl, { method: 'HEAD' })
-        .then(response => {
-          console.log('PDF file accessibility test:', response.status, response.statusText)
-          if (!response.ok) {
-            setError(`PDF file not accessible (${response.status}): ${response.statusText}`)
-          }
-        })
-        .catch(err => {
-          console.error('PDF file accessibility test failed:', err)
-          setError('Cannot access PDF file. Backend may not be running.')
-        })
-    }
-  }, [fileUrl, file])
 
   // Handle successful PDF load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
@@ -124,25 +123,43 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     setLoading(false)
   }, [retryCount])
 
-  // Handle page change
+  // Debounced session saving to prevent spam
+  const saveReadingSessionDebounced = useCallback(async (page: number, timeSpent: number) => {
+    if (!pdfId || sessionSaveInProgress.current) return
+    
+    const now = Date.now()
+    if (now - lastSessionSave.current < 2000) { // Minimum 2 seconds between saves
+      return
+    }
+    
+    sessionSaveInProgress.current = true
+    lastSessionSave.current = now
+    
+    try {
+      await apiClient.saveReadingSession({
+        pdfId,
+        page,
+        startTime: new Date(now - timeSpent),
+        endTime: new Date(now),
+        duration: timeSpent
+      })
+      console.log('Reading session saved:', { page, duration: timeSpent })
+    } catch (error) {
+      console.error('Failed to save reading session:', error)
+    } finally {
+      sessionSaveInProgress.current = false
+    }
+  }, [pdfId])
+
+  // Handle page change with improved debouncing
   const goToPage = useCallback(async (page: number) => {
     if (page < 1 || page > numPages) return
 
-    // Save reading time for current page
+    // Save reading time for current page (debounced)
     if (isRunning && pdfId) {
       const timeSpent = stopTimer()
-      
-      try {
-        await apiClient.saveReadingSession({
-          pdfId,
-          page: currentPage,
-          startTime: new Date(Date.now() - timeSpent),
-          endTime: new Date(),
-          duration: timeSpent
-        })
-        console.log('Reading session saved:', { page: currentPage, duration: timeSpent })
-      } catch (error) {
-        console.error('Failed to save reading session:', error)
+      if (timeSpent > 1000) { // Only save sessions longer than 1 second
+        saveReadingSessionDebounced(currentPage, timeSpent)
       }
     }
 
@@ -153,8 +170,8 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     // Start timer for new page
     startTimer()
 
-    // Update progress on backend
-    if (pdfId) {
+    // Update progress on backend (debounced)
+    if (pdfId && !sessionSaveInProgress.current) {
       try {
         await apiClient.request(`/pdfs/${pdfId}/progress`, {
           method: 'PUT',
@@ -165,7 +182,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
         console.error('Failed to update progress:', error)
       }
     }
-  }, [currentPage, numPages, isRunning, pdfId, stopTimer, startTimer, dispatch])
+  }, [currentPage, numPages, isRunning, pdfId, stopTimer, startTimer, dispatch, saveReadingSessionDebounced])
 
   // Keyboard navigation
   useEffect(() => {
@@ -203,7 +220,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
   const refreshFile = () => {
     if (pdfId) {
       const newUrl = `${apiClient.getPDFFileUrl(pdfId)}?t=${Date.now()}`
-      setFileUrl(newUrl)
+      fileUrlRef.current = newUrl
       console.log('Refreshing PDF URL:', newUrl)
       retryLoad()
     }
@@ -368,6 +385,9 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
               cMapPacked: true,
               standardFontDataUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
               withCredentials: false,
+              // Add caching options to reduce requests
+              disableAutoFetch: false,
+              disableStream: false,
             }}
           >
             {!loading && !error && (

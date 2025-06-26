@@ -19,10 +19,6 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 8000
 
-// Initialize database ONCE at startup
-const dbService = DatabaseService.getInstance()
-dbService.initialize()
-
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '../uploads')
 if (!fs.existsSync(uploadsDir)) {
@@ -30,16 +26,17 @@ if (!fs.existsSync(uploadsDir)) {
   console.log('📁 Created uploads directory:', uploadsDir)
 }
 
-// More relaxed rate limiting for development
+// RELAXED rate limiting for development (Stage 2)
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1 minute instead of 15
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000'), // 1000 instead of 100
+  windowMs: 60000, // 1 minute
+  max: 1000, // Very high limit for development
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip rate limiting for health checks in development
+  // Skip rate limiting in development for localhost
   skip: (req) => {
-    return process.env.NODE_ENV === 'development' && req.path === '/api/health'
+    return process.env.NODE_ENV === 'development' && 
+           (req.ip === '127.0.0.1' || req.ip === '::1' || req.ip?.includes('localhost'))
   }
 })
 
@@ -65,7 +62,7 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use(logger)
 
-// Serve uploaded files with proper headers for PDFs
+// Serve uploaded files with proper headers for PDFs and caching
 app.use('/uploads', (req, res, next) => {
   // Set CORS headers for file requests
   res.header('Access-Control-Allow-Origin', '*')
@@ -82,7 +79,8 @@ app.use('/uploads', (req, res, next) => {
     if (path.extname(filePath) === '.pdf') {
       res.setHeader('Content-Type', 'application/pdf')
       res.setHeader('Accept-Ranges', 'bytes')
-      res.setHeader('Cache-Control', 'public, max-age=86400')
+      // Cache PDFs for 1 hour to reduce requests
+      res.setHeader('Cache-Control', 'public, max-age=3600')
     }
   }
 }))
@@ -93,12 +91,17 @@ app.use('/api/reading', basicReadingRoutes)
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
+  const dbService = DatabaseService.getInstance()
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     version: '1.2.0', // Stage 2 version
     stage: 2,
+    database: {
+      initialized: dbService.isInitialized(),
+      singleton: true
+    },
     features: {
       pdfViewing: true,
       basicTimeTracking: true,
@@ -116,6 +119,12 @@ app.get('/api/health', (req, res) => {
 // Basic analytics summary endpoint (simplified for Stage 2)
 app.get('/api/analytics/summary', async (req, res) => {
   try {
+    const dbService = DatabaseService.getInstance()
+    
+    if (!dbService.isInitialized()) {
+      return res.status(500).json({ error: 'Database not initialized' })
+    }
+    
     const db = dbService.getDatabase()
     
     // Get basic statistics only (no complex analytics)
@@ -181,28 +190,50 @@ app.use('*', (req, res) => {
   })
 })
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`)
-  console.log(`📊 Environment: ${process.env.NODE_ENV}`)
-  console.log(`🔗 CORS origin: ${process.env.CORS_ORIGIN}`)
-  console.log(`📁 Uploads directory: ${uploadsDir}`)
-  console.log(`📄 Static files served at: http://localhost:${PORT}/uploads/`)
-  console.log(`📚 Stage 2: Basic Reading Time Tracking - ACTIVE`)
-  console.log(`⏳ Next: Stage 3 (Estimated Reading Time)`)
-})
+// Initialize database ONCE and start server
+async function startServer() {
+  try {
+    console.log('🚀 Initializing Study Planner Backend...')
+    
+    // Initialize database singleton ONCE
+    const dbService = DatabaseService.getInstance()
+    await dbService.initialize()
+    
+    console.log('✅ Database singleton initialized successfully')
+    
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`)
+      console.log(`📊 Environment: ${process.env.NODE_ENV}`)
+      console.log(`🔗 CORS origin: ${process.env.CORS_ORIGIN}`)
+      console.log(`📁 Uploads directory: ${uploadsDir}`)
+      console.log(`📄 Static files served at: http://localhost:${PORT}/uploads/`)
+      console.log(`📚 Stage 2: Basic Reading Time Tracking - ACTIVE`)
+      console.log(`⏳ Next: Stage 3 (Estimated Reading Time)`)
+      console.log(`✅ DATABASE: Singleton pattern active - NO multiple connections`)
+    })
+  } catch (error) {
+    console.error('❌ Failed to start server:', error)
+    process.exit(1)
+  }
+}
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully')
-  dbService.close()
+  const dbService = DatabaseService.getInstance()
+  await dbService.close()
   process.exit(0)
 })
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully')
-  dbService.close()
+  const dbService = DatabaseService.getInstance()
+  await dbService.close()
   process.exit(0)
 })
+
+// Start the server
+startServer()
 
 export default app

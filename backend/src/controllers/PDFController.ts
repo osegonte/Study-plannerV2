@@ -1,4 +1,3 @@
-// Fixed PDFController.ts
 import { Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import fs from 'fs'
@@ -11,9 +10,8 @@ export class PDFController {
   private dbService: DatabaseService
 
   constructor() {
-    // Use singleton instance
+    // Get singleton instance - DO NOT call initialize here
     this.dbService = DatabaseService.getInstance()
-    this.dbService.initialize()
   }
 
   async uploadPDF(req: Request, res: Response) {
@@ -30,7 +28,7 @@ export class PDFController {
       const pdfData = await pdfParse(pdfBuffer)
       const totalPages = pdfData.numpages
 
-      console.log('PDF uploaded:', {
+      console.log('📄 PDF uploaded:', {
         id: pdfId,
         filename: req.file.filename,
         originalName: req.file.originalname,
@@ -39,7 +37,11 @@ export class PDFController {
         path: filePath
       })
 
-      // Get database instance (reuse existing connection)
+      // Get database instance (should already be initialized)
+      if (!this.dbService.isInitialized()) {
+        throw createError('Database not initialized', 500)
+      }
+      
       const db = this.dbService.getDatabase()
       
       await new Promise<void>((resolve, reject) => {
@@ -75,7 +77,7 @@ export class PDFController {
         message: 'PDF uploaded successfully'
       })
     } catch (error) {
-      console.error('PDF upload error:', error)
+      console.error('❌ PDF upload error:', error)
       // Clean up file if database save fails
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath)
@@ -85,6 +87,10 @@ export class PDFController {
   }
 
   async getAllPDFs(req: Request, res: Response) {
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
     
     const pdfs = await new Promise<any[]>((resolve, reject) => {
@@ -106,6 +112,11 @@ export class PDFController {
 
   async getPDFById(req: Request, res: Response) {
     const { id } = req.params
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
     
     const pdf = await new Promise<any>((resolve, reject) => {
@@ -137,6 +148,10 @@ export class PDFController {
 
   // Helper method for file serving
   async getPDFInfo(id: string) {
+    if (!this.dbService.isInitialized()) {
+      throw new Error('Database not initialized')
+    }
+    
     const db = this.dbService.getDatabase()
     
     return new Promise<any>((resolve, reject) => {
@@ -153,6 +168,11 @@ export class PDFController {
 
   async deletePDF(req: Request, res: Response) {
     const { id } = req.params
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
     
     // Get PDF info first
@@ -186,6 +206,11 @@ export class PDFController {
   async updateProgress(req: Request, res: Response) {
     const { id } = req.params
     const { currentPage } = req.body
+    
+    if (!this.dbService.isInitialized()) {
+      throw createError('Database not initialized', 500)
+    }
+    
     const db = this.dbService.getDatabase()
 
     await new Promise<void>((resolve, reject) => {
