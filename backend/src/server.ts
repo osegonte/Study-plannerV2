@@ -8,7 +8,7 @@ import path from 'path'
 import fs from 'fs'
 
 import { pdfRoutes } from './routes/pdfRoutes'
-import { enhancedReadingRoutes } from './routes/enhancedReadingRoutes'
+import { basicReadingRoutes } from './routes/basicReadingRoutes' // Changed from enhancedReadingRoutes
 import { errorHandler } from './middleware/errorHandler'
 import { logger } from './middleware/logger'
 import { DatabaseService } from './services/DatabaseService'
@@ -83,7 +83,7 @@ app.use('/uploads', (req, res, next) => {
 
 // API Routes
 app.use('/api/pdfs', pdfRoutes)
-app.use('/api/reading', enhancedReadingRoutes) // Use enhanced routes
+app.use('/api/reading', basicReadingRoutes) // Changed from enhancedReadingRoutes
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -91,38 +91,37 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
-    version: '2.0.0', // Updated version for Stage 2
+    version: '1.2.0', // Stage 2 version
+    stage: 2,
     features: {
-      basicPDFViewing: true,
-      timeTracking: true,
-      enhancedAnalytics: true,
-      readingInsights: true,
-      focusScoring: true,
-      readingHeatmaps: true
+      pdfViewing: true,
+      basicTimeTracking: true,
+      readingProgress: true,
+      // Stage 3+ features (not yet implemented)
+      estimatedReadingTime: false,
+      topicOrganization: false,
+      enhancedAnalytics: false
     },
     uploadsDir: uploadsDir,
     uploadsExists: fs.existsSync(uploadsDir)
   })
 })
 
-// Analytics summary endpoint for dashboard
+// Basic analytics summary endpoint (simplified for Stage 2)
 app.get('/api/analytics/summary', async (req, res) => {
   try {
     const db = dbService.getDatabase()
     
-    // Get overall statistics
-    const overallStats = await new Promise((resolve, reject) => {
+    // Get basic statistics only (no complex analytics)
+    const basicStats = await new Promise((resolve, reject) => {
       db.get(
         `SELECT 
            COUNT(DISTINCT p.id) as total_pdfs,
-           COUNT(DISTINCT rs.pdf_id) as pdfs_with_reading,
            SUM(p.total_pages) as total_pages,
            COALESCE(SUM(rp.total_time_spent), 0) as total_time_spent,
-           COALESCE(SUM(rp.pages_read), 0) as total_pages_read,
-           COUNT(DISTINCT DATE(rs.start_time)) as reading_days
+           COALESCE(SUM(rp.pages_read), 0) as total_pages_read
          FROM pdfs p
-         LEFT JOIN reading_progress rp ON p.id = rp.pdf_id
-         LEFT JOIN reading_sessions rs ON p.id = rs.pdf_id`,
+         LEFT JOIN reading_progress rp ON p.id = rp.pdf_id`,
         [],
         (err, row) => {
           if (err) reject(err)
@@ -131,31 +130,12 @@ app.get('/api/analytics/summary', async (req, res) => {
       )
     })
 
-    // Get recent activity
-    const recentActivity = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT 
-           DATE(start_time) as date,
-           COUNT(*) as sessions,
-           SUM(duration) as total_time
-         FROM reading_sessions 
-         WHERE start_time >= datetime('now', '-7 days')
-         GROUP BY DATE(start_time)
-         ORDER BY date DESC`,
-        [],
-        (err, rows) => {
-          if (err) reject(err)
-          else resolve(rows)
-        }
-      )
-    })
-
     res.json({
-      ...overallStats,
-      recentActivity,
-      averageReadingSpeed: overallStats.total_pages_read > 0 
-        ? overallStats.total_time_spent / overallStats.total_pages_read 
-        : 0
+      ...basicStats,
+      averageReadingSpeed: basicStats.total_pages_read > 0 
+        ? basicStats.total_time_spent / basicStats.total_pages_read 
+        : 0,
+      message: "Stage 2: Basic analytics only"
     })
   } catch (error) {
     console.error('Analytics summary error:', error)
@@ -202,7 +182,8 @@ app.listen(PORT, () => {
   console.log(`🔗 CORS origin: ${process.env.CORS_ORIGIN}`)
   console.log(`📁 Uploads directory: ${uploadsDir}`)
   console.log(`📄 Static files served at: http://localhost:${PORT}/uploads/`)
-  console.log(`✨ Stage 2: Enhanced Reading Analytics - READY`)
+  console.log(`📚 Stage 2: Basic Reading Time Tracking - ACTIVE`)
+  console.log(`⏳ Next: Stage 3 (Estimated Reading Time)`)
 })
 
 // Graceful shutdown
