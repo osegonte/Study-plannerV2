@@ -1,31 +1,28 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
-import { ChevronLeft, ChevronRight, RotateCcw, ZoomIn, ZoomOut, Loader2, AlertCircle } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCcw, ZoomIn, ZoomOut, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useReadingTimer } from '@/hooks/useReadingTimer'
 import { usePDF } from '@/contexts/PDFContext'
 import { apiClient } from '@/utils/api'
 
 // Set up PDF.js worker with multiple fallbacks
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.js',
-  import.meta.url,
-).toString()
-
-// Fallback worker sources
 const workerSources = [
+  new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString(),
   `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
   `//cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
   `/node_modules/pdfjs-dist/build/pdf.worker.min.js`
 ]
 
-// Try different worker sources if the first one fails
 let workerIndex = 0
-const tryNextWorker = () => {
+const setWorker = () => {
   if (workerIndex < workerSources.length) {
     pdfjs.GlobalWorkerOptions.workerSrc = workerSources[workerIndex]
-    workerIndex++
+    console.log(`Setting PDF.js worker to: ${workerSources[workerIndex]}`)
   }
 }
+
+// Initialize first worker
+setWorker()
 
 interface PDFViewerProps {
   file: File | string
@@ -39,13 +36,49 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState<number>(0)
+  const [fileUrl, setFileUrl] = useState<string>('')
   
   const { startTimer, stopTimer, isRunning, formattedTime } = useReadingTimer()
   const { dispatch } = usePDF()
 
+  // Set up file URL
+  useEffect(() => {
+    if (typeof file === 'string') {
+      setFileUrl(file)
+      console.log('PDF URL set to:', file)
+    } else if (file instanceof File) {
+      const url = URL.createObjectURL(file)
+      setFileUrl(url)
+      console.log('PDF blob URL created:', url)
+      
+      return () => {
+        URL.revokeObjectURL(url)
+        console.log('PDF blob URL revoked')
+      }
+    }
+  }, [file])
+
+  // Test file accessibility
+  useEffect(() => {
+    if (fileUrl && typeof file === 'string') {
+      // Test if the URL is accessible
+      fetch(fileUrl, { method: 'HEAD' })
+        .then(response => {
+          console.log('PDF file accessibility test:', response.status, response.statusText)
+          if (!response.ok) {
+            setError(`PDF file not accessible (${response.status}): ${response.statusText}`)
+          }
+        })
+        .catch(err => {
+          console.error('PDF file accessibility test failed:', err)
+          setError('Cannot access PDF file. Backend may not be running.')
+        })
+    }
+  }, [fileUrl, file])
+
   // Handle successful PDF load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
-    console.log('PDF loaded successfully:', { numPages })
+    console.log('PDF loaded successfully:', { numPages, fileUrl })
     setNumPages(numPages)
     setLoading(false)
     setError(null)
@@ -57,7 +90,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     
     // Start timer for first page
     startTimer()
-  }, [dispatch, startTimer])
+  }, [dispatch, startTimer, fileUrl])
 
   // Handle PDF load error with retry logic
   const onDocumentLoadError = useCallback((error: Error) => {
@@ -66,7 +99,8 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     // Try next worker source
     if (retryCount < workerSources.length - 1) {
       console.log('Trying alternative worker source...')
-      tryNextWorker()
+      workerIndex++
+      setWorker()
       setRetryCount(prev => prev + 1)
       setLoading(true)
       return
@@ -76,12 +110,14 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     
     if (error.message.includes('worker')) {
       errorMessage += 'PDF.js worker failed to load. This might be a network issue.'
-    } else if (error.message.includes('format')) {
+    } else if (error.message.includes('format') || error.message.includes('Invalid PDF')) {
       errorMessage += 'Invalid PDF format or corrupted file.'
-    } else if (error.message.includes('network')) {
-      errorMessage += 'Network error. Please check your connection.'
+    } else if (error.message.includes('network') || error.message.includes('fetch')) {
+      errorMessage += 'Network error. Please check your connection and ensure the backend is running.'
+    } else if (error.message.includes('404')) {
+      errorMessage += 'PDF file not found. It may have been deleted.'
     } else {
-      errorMessage += 'Please try refreshing the page or uploading the file again.'
+      errorMessage += error.message || 'Unknown error occurred.'
     }
     
     setError(errorMessage)
@@ -104,6 +140,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
           endTime: new Date(),
           duration: timeSpent
         })
+        console.log('Reading session saved:', { page: currentPage, duration: timeSpent })
       } catch (error) {
         console.error('Failed to save reading session:', error)
       }
@@ -123,6 +160,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
           method: 'PUT',
           body: JSON.stringify({ currentPage: page })
         })
+        console.log('Progress updated:', { page })
       } catch (error) {
         console.error('Failed to update progress:', error)
       }
@@ -152,12 +190,23 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
 
   // Retry loading
   const retryLoad = () => {
+    console.log('Retrying PDF load...')
     setError(null)
     setLoading(true)
     setRetryCount(0)
     // Reset worker to first option
     workerIndex = 0
-    pdfjs.GlobalWorkerOptions.workerSrc = workerSources[0]
+    setWorker()
+  }
+
+  // Force refresh file URL (for backend file issues)
+  const refreshFile = () => {
+    if (pdfId) {
+      const newUrl = `${apiClient.getPDFFileUrl(pdfId)}?t=${Date.now()}`
+      setFileUrl(newUrl)
+      console.log('Refreshing PDF URL:', newUrl)
+      retryLoad()
+    }
   }
 
   if (error) {
@@ -168,18 +217,44 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
           <h3 className="text-lg font-semibold text-gray-900 mb-2">PDF Loading Error</h3>
           <p className="text-gray-600 mb-4 text-sm">{error}</p>
           <div className="space-y-2">
-            <button onClick={retryLoad} className="btn-primary">
-              Try Again
-            </button>
-            <div className="text-xs text-gray-500">
-              <p>If the problem persists:</p>
-              <ul className="mt-1 space-y-1">
-                <li>• Check if the PDF file is valid</li>
+            <div className="flex space-x-2 justify-center">
+              <button onClick={retryLoad} className="btn-primary">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Try Again
+              </button>
+              {pdfId && (
+                <button onClick={refreshFile} className="btn-secondary">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Refresh File
+                </button>
+              )}
+            </div>
+            <div className="text-xs text-gray-500 mt-4">
+              <p><strong>Troubleshooting:</strong></p>
+              <ul className="mt-1 space-y-1 text-left">
+                <li>• Check if the backend server is running on port 8000</li>
+                <li>• Verify the PDF file exists and is not corrupted</li>
                 <li>• Try refreshing the page</li>
                 <li>• Check your internet connection</li>
               </ul>
+              {pdfId && (
+                <p className="mt-2">
+                  <strong>File URL:</strong> {fileUrl}
+                </p>
+              )}
             </div>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!fileUrl) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary-600 mx-auto mb-2" />
+          <p className="text-gray-600">Preparing PDF...</p>
         </div>
       </div>
     )
@@ -283,7 +358,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
           )}
           
           <Document
-            file={file}
+            file={fileUrl}
             onLoadSuccess={onDocumentLoadSuccess}
             onLoadError={onDocumentLoadError}
             loading={null}
@@ -292,6 +367,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
               cMapUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
               cMapPacked: true,
               standardFontDataUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+              withCredentials: false,
             }}
           >
             {!loading && !error && (

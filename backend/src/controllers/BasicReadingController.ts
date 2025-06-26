@@ -1,3 +1,4 @@
+// Fixed BasicReadingController.ts
 import { Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { DatabaseService } from '../services/DatabaseService'
@@ -7,7 +8,8 @@ export class BasicReadingController {
   private dbService: DatabaseService
 
   constructor() {
-    this.dbService = new DatabaseService()
+    // Use singleton instance
+    this.dbService = DatabaseService.getInstance()
     this.dbService.initialize()
   }
 

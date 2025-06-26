@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileText, X, CheckCircle, AlertCircle } from 'lucide-react'
+import { Upload, FileText, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import { apiClient } from '@/utils/api'
 
 interface UploadedFile {
@@ -18,8 +18,28 @@ interface PDFUploadZoneProps {
 
 export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUploadZoneProps) {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [connectionTest, setConnectionTest] = useState<'pending' | 'success' | 'error'>('pending')
+
+  // Test backend connection when component mounts
+  React.useEffect(() => {
+    apiClient.checkHealth()
+      .then(() => setConnectionTest('success'))
+      .catch(() => setConnectionTest('error'))
+  }, [])
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    console.log('Files dropped:', acceptedFiles)
+
+    // Test backend connection first
+    try {
+      await apiClient.checkHealth()
+      setConnectionTest('success')
+    } catch (error) {
+      setConnectionTest('error')
+      console.error('Backend not available:', error)
+      return
+    }
+
     const newFiles: UploadedFile[] = acceptedFiles.map(file => ({
       file,
       progress: 0,
@@ -33,7 +53,9 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
       const fileIndex = uploadedFiles.length + i
       
       try {
-        // Simulate progress updates
+        console.log(`Starting upload ${i + 1}/${newFiles.length}:`, newFiles[i].file.name)
+        
+        // Simulate progress updates during upload
         const progressInterval = setInterval(() => {
           setUploadedFiles(prev => 
             prev.map((f, idx) => 
@@ -42,11 +64,13 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
                 : f
             )
           )
-        }, 200)
+        }, 300)
 
         const result = await apiClient.uploadPDF(newFiles[i].file)
         
         clearInterval(progressInterval)
+        
+        console.log('Upload completed:', result)
         
         setUploadedFiles(prev => 
           prev.map((f, idx) => 
@@ -56,6 +80,8 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
           )
         )
       } catch (error) {
+        console.error('Upload failed:', error)
+        
         setUploadedFiles(prev => 
           prev.map((f, idx) => 
             idx === fileIndex 
@@ -72,12 +98,12 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
     }
 
     // Notify parent component of successful uploads
-    if (onUploadSuccess) {
+    setTimeout(() => {
       const successfulUploads = uploadedFiles.filter(f => f.status === 'success')
-      if (successfulUploads.length > 0) {
+      if (successfulUploads.length > 0 && onUploadSuccess) {
         onUploadSuccess(successfulUploads)
       }
-    }
+    }, 1000)
   }, [uploadedFiles, onUploadSuccess])
 
   const { getRootProps, getInputProps, isDragActive, fileRejections } = useDropzone({
@@ -86,7 +112,8 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
       'application/pdf': ['.pdf']
     },
     maxFiles,
-    maxSize: 50 * 1024 * 1024 // 50MB
+    maxSize: 50 * 1024 * 1024, // 50MB
+    disabled: connectionTest === 'error'
   })
 
   const removeFile = (index: number) => {
@@ -97,8 +124,53 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
     setUploadedFiles([])
   }
 
+  const retryConnection = async () => {
+    setConnectionTest('pending')
+    try {
+      await apiClient.checkHealth()
+      setConnectionTest('success')
+    } catch (error) {
+      setConnectionTest('error')
+    }
+  }
+
+  // Backend connection error
+  if (connectionTest === 'error') {
+    return (
+      <div className="border-2 border-dashed border-red-300 rounded-lg p-8 text-center bg-red-50">
+        <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-red-900 mb-2">Backend Not Available</h3>
+        <p className="text-red-700 mb-4 text-sm">
+          Cannot connect to the backend server. Make sure it's running on port 8000.
+        </p>
+        <div className="space-y-2">
+          <button 
+            onClick={retryConnection}
+            className="btn-secondary mr-2"
+          >
+            Retry Connection
+          </button>
+          <div className="text-xs text-red-600">
+            <p>To start the backend:</p>
+            <code className="bg-red-100 px-2 py-1 rounded mt-1 inline-block">
+              cd backend && npm run dev
+            </code>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
+      {/* Connection Status */}
+      {connectionTest === 'success' && (
+        <div className="flex items-center space-x-2 text-sm text-green-600 bg-green-50 p-2 rounded">
+          <CheckCircle className="h-4 w-4" />
+          <span>Backend connected successfully</span>
+        </div>
+      )}
+
       {/* Drop Zone */}
       <div
         {...getRootProps()}
@@ -106,26 +178,44 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
           border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-200
           ${isDragActive 
             ? 'border-primary-500 bg-primary-50 scale-105' 
-            : 'border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50'
+            : connectionTest === 'success'
+            ? 'border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50'
+            : 'border-gray-200 bg-gray-50 cursor-not-allowed'
           }
         `}
       >
         <input {...getInputProps()} />
-        <Upload className={`h-12 w-12 mx-auto mb-4 transition-colors ${
-          isDragActive ? 'text-primary-500' : 'text-gray-400'
-        }`} />
+        
+        {connectionTest === 'pending' ? (
+          <Loader2 className="h-12 w-12 text-gray-400 mx-auto mb-4 animate-spin" />
+        ) : (
+          <Upload className={`h-12 w-12 mx-auto mb-4 transition-colors ${
+            isDragActive ? 'text-primary-500' : 'text-gray-400'
+          }`} />
+        )}
+        
         <h3 className="text-lg font-medium text-gray-900 mb-2">
-          {isDragActive ? 'Drop PDF files here...' : 'Upload PDF files'}
+          {connectionTest === 'pending' 
+            ? 'Connecting to backend...'
+            : isDragActive 
+            ? 'Drop PDF files here...' 
+            : 'Upload PDF files'
+          }
         </h3>
-        <p className="text-gray-500 mb-4">
-          Drag and drop your PDF files here, or click to browse
-        </p>
-        <button className="btn-primary">
-          Choose Files
-        </button>
-        <p className="text-xs text-gray-400 mt-2">
-          Maximum file size: 50MB • Supported format: PDF only
-        </p>
+        
+        {connectionTest === 'success' && (
+          <>
+            <p className="text-gray-500 mb-4">
+              Drag and drop your PDF files here, or click to browse
+            </p>
+            <button className="btn-primary">
+              Choose Files
+            </button>
+            <p className="text-xs text-gray-400 mt-2">
+              Maximum file size: 50MB • Supported format: PDF only
+            </p>
+          </>
+        )}
       </div>
 
       {/* File Rejections */}
@@ -166,12 +256,12 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
           {uploadedFiles.map((uploadedFile, index) => (
             <div key={index} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
               <div className="flex-shrink-0">
-                {uploadedFile.status === 'success' ? (
+                {uploadedFile.status === 'uploading' ? (
+                  <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+                ) : uploadedFile.status === 'success' ? (
                   <CheckCircle className="h-5 w-5 text-green-500" />
-                ) : uploadedFile.status === 'error' ? (
-                  <AlertCircle className="h-5 w-5 text-red-500" />
                 ) : (
-                  <FileText className="h-5 w-5 text-gray-400" />
+                  <AlertCircle className="h-5 w-5 text-red-500" />
                 )}
               </div>
               
@@ -198,7 +288,9 @@ export default function PDFUploadZone({ onUploadSuccess, maxFiles = 10 }: PDFUpl
                 )}
                 
                 {uploadedFile.status === 'success' && (
-                  <p className="text-xs text-green-600 mt-1">✓ Upload complete</p>
+                  <p className="text-xs text-green-600 mt-1">
+                    ✓ Upload complete • ID: {uploadedFile.id}
+                  </p>
                 )}
                 
                 {uploadedFile.status === 'error' && (

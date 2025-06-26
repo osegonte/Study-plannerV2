@@ -3,14 +3,28 @@ import path from 'path'
 import fs from 'fs'
 
 export class DatabaseService {
+  private static instance: DatabaseService | null = null
   private db: sqlite3.Database | null = null
   private dbPath: string
+  private initialized: boolean = false
 
   constructor() {
     this.dbPath = process.env.DATABASE_URL || './database/app.sqlite'
   }
 
+  // Singleton pattern - only one instance per application
+  static getInstance(): DatabaseService {
+    if (!DatabaseService.instance) {
+      DatabaseService.instance = new DatabaseService()
+    }
+    return DatabaseService.instance
+  }
+
   initialize(): void {
+    if (this.initialized && this.db) {
+      return // Already initialized
+    }
+
     try {
       // Ensure database directory exists
       const dbDir = path.dirname(this.dbPath)
@@ -25,6 +39,7 @@ export class DatabaseService {
         }
         console.log('📦 Connected to SQLite database')
         this.createTables()
+        this.initialized = true
       })
     } catch (error) {
       console.error('Failed to initialize database:', error)
@@ -90,18 +105,26 @@ export class DatabaseService {
       )`
     ]
 
+    let completedTables = 0
     tables.forEach((sql, index) => {
       this.db!.run(sql, (err) => {
         if (err) {
           console.error(`Error creating table ${index + 1}:`, err.message)
+        } else {
+          completedTables++
+          if (completedTables === tables.length) {
+            console.log('✅ Database tables initialized')
+          }
         }
       })
     })
-
-    console.log('✅ Database tables initialized')
   }
 
   getDatabase(): sqlite3.Database {
+    if (!this.initialized || !this.db) {
+      this.initialize()
+    }
+    
     if (!this.db) {
       throw new Error('Database not initialized')
     }
@@ -117,6 +140,8 @@ export class DatabaseService {
           console.log('📦 Database connection closed')
         }
       })
+      this.db = null
+      this.initialized = false
     }
   }
 }

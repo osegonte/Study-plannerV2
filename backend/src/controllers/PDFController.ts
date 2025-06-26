@@ -1,3 +1,4 @@
+// Fixed PDFController.ts
 import { Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import fs from 'fs'
@@ -10,7 +11,8 @@ export class PDFController {
   private dbService: DatabaseService
 
   constructor() {
-    this.dbService = new DatabaseService()
+    // Use singleton instance
+    this.dbService = DatabaseService.getInstance()
     this.dbService.initialize()
   }
 
@@ -37,7 +39,7 @@ export class PDFController {
         path: filePath
       })
 
-      // Save PDF info to database
+      // Get database instance (reuse existing connection)
       const db = this.dbService.getDatabase()
       
       await new Promise<void>((resolve, reject) => {

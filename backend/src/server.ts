@@ -8,7 +8,7 @@ import path from 'path'
 import fs from 'fs'
 
 import { pdfRoutes } from './routes/pdfRoutes'
-import { basicReadingRoutes } from './routes/basicReadingRoutes' // Changed from enhancedReadingRoutes
+import { basicReadingRoutes } from './routes/basicReadingRoutes'
 import { errorHandler } from './middleware/errorHandler'
 import { logger } from './middleware/logger'
 import { DatabaseService } from './services/DatabaseService'
@@ -19,8 +19,8 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 8000
 
-// Initialize database
-const dbService = new DatabaseService()
+// Initialize database ONCE at startup
+const dbService = DatabaseService.getInstance()
 dbService.initialize()
 
 // Ensure uploads directory exists
@@ -30,11 +30,17 @@ if (!fs.existsSync(uploadsDir)) {
   console.log('📁 Created uploads directory:', uploadsDir)
 }
 
-// Rate limiting
+// More relaxed rate limiting for development
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1 minute instead of 15
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000'), // 1000 instead of 100
   message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip rate limiting for health checks in development
+  skip: (req) => {
+    return process.env.NODE_ENV === 'development' && req.path === '/api/health'
+  }
 })
 
 // CORS configuration
@@ -83,7 +89,7 @@ app.use('/uploads', (req, res, next) => {
 
 // API Routes
 app.use('/api/pdfs', pdfRoutes)
-app.use('/api/reading', basicReadingRoutes) // Changed from enhancedReadingRoutes
+app.use('/api/reading', basicReadingRoutes)
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -189,11 +195,13 @@ app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully')
+  dbService.close()
   process.exit(0)
 })
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully')
+  dbService.close()
   process.exit(0)
 })
 
