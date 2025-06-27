@@ -59,12 +59,6 @@ export const calculateDocumentEstimates = (pageTimes, currentPage, totalPages) =
 };
 
 /**
- * Calculate topic-level reading estimates and goals
- * @param {Array} documents - Documents in the topic
- * @param {Object} topicGoals - Topic-specific goals
- * @returns {Object} Topic reading estimates
- */
-/**
  * Calculate topic-level reading estimates using cross-document data
  * @param {Array} documents - Documents in the topic
  * @param {Object} topicGoals - Topic-specific goals
@@ -185,86 +179,6 @@ export const calculateTopicEstimates = (documents, topicGoals = {}) => {
     goalProgress,
     topicReadingSpeed, // Include for debugging
     hasTopicReadingData
-  };
-};) => {
-  if (!documents || documents.length === 0) {
-    return {
-      totalDocuments: 0,
-      totalPages: 0,
-      totalEstimatedTime: 0,
-      timeRemaining: 0,
-      averageProgress: 0,
-      documentsCompleted: 0,
-      estimatedCompletionDate: null,
-      dailyReadingRequired: 0,
-      weeklyReadingRequired: 0,
-      goalProgress: {
-        timeGoal: null,
-        pageGoal: null,
-        completionGoal: null
-      }
-    };
-  }
-
-  let totalEstimatedTime = 0;
-  let totalTimeRemaining = 0;
-  let totalPages = 0;
-  let totalProgress = 0;
-  let documentsCompleted = 0;
-  let documentsWithEstimates = 0;
-
-  // Calculate estimates for each document
-  documents.forEach(doc => {
-    const docEstimates = calculateDocumentEstimates(
-      doc.pageTimes || {},
-      doc.currentPage || 1,
-      doc.totalPages || 0
-    );
-
-    if (docEstimates.totalEstimatedTime > 0) {
-      totalEstimatedTime += docEstimates.totalEstimatedTime;
-      totalTimeRemaining += docEstimates.timeRemaining;
-      documentsWithEstimates++;
-    }
-
-    totalPages += doc.totalPages || 0;
-    totalProgress += docEstimates.completionPercentage;
-    
-    if (docEstimates.completionPercentage >= 100) {
-      documentsCompleted++;
-    }
-  });
-
-  const averageProgress = documents.length > 0 ? totalProgress / documents.length : 0;
-  
-  // Calculate completion date based on reading goals
-  const estimatedCompletionDate = calculateTopicCompletionDate(
-    totalTimeRemaining,
-    topicGoals
-  );
-
-  // Calculate daily/weekly reading requirements
-  const { dailyReadingRequired, weeklyReadingRequired } = calculateReadingRequirements(
-    totalTimeRemaining,
-    topicGoals,
-    estimatedCompletionDate
-  );
-
-  // Calculate goal progress
-  const goalProgress = calculateGoalProgress(documents, topicGoals);
-
-  return {
-    totalDocuments: documents.length,
-    totalPages,
-    totalEstimatedTime,
-    timeRemaining: totalTimeRemaining,
-    averageProgress,
-    documentsCompleted,
-    documentsWithEstimates,
-    estimatedCompletionDate,
-    dailyReadingRequired,
-    weeklyReadingRequired,
-    goalProgress
   };
 };
 
@@ -491,6 +405,7 @@ export const calculateReadingVelocity = (pageTimes) => {
   
   return { trend, velocity, improvement: Math.round(improvement) };
 };
+
 /**
  * Calculate average reading time per page from page timing data
  * @param {Object} pageTimes - Object with page numbers as keys and time in seconds as values

@@ -350,6 +350,12 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                     file={file}
                     onLoadSuccess={onDocumentLoadSuccess}
                     onLoadError={onDocumentLoadError}
+                    options={{
+                      // Disable text layer to prevent text parsing
+                      disableTextLayer: true,
+                      // Also disable annotations layer if not needed
+                      disableAnnotationLayer: true
+                    }}
                     loading={
                       <div className="text-center py-12">
                         <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -367,6 +373,9 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                     <Page
                       pageNumber={pageNumber}
                       scale={scale}
+                      // Disable text layer for this page too
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
                       loading={
                         <div className="bg-white shadow-lg rounded border p-8 animate-pulse">
                           <div className="h-96 bg-gray-200 rounded"></div>
