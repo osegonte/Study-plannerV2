@@ -6,6 +6,24 @@ import { usePDF } from '@/contexts/PDFContext'
 import { apiClient } from '@/utils/api'
 
 // CRITICAL FIX: Set up PDF.js worker correctly
+// Enhanced worker configuration with fallbacks
+const WORKER_URLS = [
+  new URL("pdfjs-dist/build/pdf.worker.min.js", import.meta.url).toString(),
+  `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+  "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"
+]
+
+const initializeWorker = () => {
+  for (const url of WORKER_URLS) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = url
+      console.log("PDF worker set to:", url)
+      break
+    } catch (error) {
+      console.warn("Failed worker URL:", url)
+    }
+  }
+}
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.js',
   import.meta.url,
@@ -80,6 +98,24 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     // Try fallback worker URLs
     if (workerRetryCount < WORKER_FALLBACKS.length) {
       console.log(`Trying fallback worker ${workerRetryCount + 1}:`, WORKER_FALLBACKS[workerRetryCount])
+// Enhanced worker configuration with fallbacks
+const WORKER_URLS = [
+  new URL("pdfjs-dist/build/pdf.worker.min.js", import.meta.url).toString(),
+  `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+  "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"
+]
+
+const initializeWorker = () => {
+  for (const url of WORKER_URLS) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = url
+      console.log("PDF worker set to:", url)
+      break
+    } catch (error) {
+      console.warn("Failed worker URL:", url)
+    }
+  }
+}
       pdfjs.GlobalWorkerOptions.workerSrc = WORKER_FALLBACKS[workerRetryCount]
       setWorkerRetryCount(prev => prev + 1)
       setRetryCount(prev => prev + 1)
@@ -110,6 +146,24 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
 
   // Handle successful PDF load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
+// Enhanced worker configuration with fallbacks
+const WORKER_URLS = [
+  new URL("pdfjs-dist/build/pdf.worker.min.js", import.meta.url).toString(),
+  `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+  "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"
+]
+
+const initializeWorker = () => {
+  for (const url of WORKER_URLS) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = url
+      console.log("PDF worker set to:", url)
+      break
+    } catch (error) {
+      console.warn("Failed worker URL:", url)
+    }
+  }
+}
     console.log('PDF loaded successfully:', { numPages, fileUrl, workerUsed: pdfjs.GlobalWorkerOptions.workerSrc })
     setNumPages(numPages)
     setLoading(false)
@@ -215,6 +269,24 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     setRetryCount(0)
     setWorkerRetryCount(0)
     // Reset to primary worker
+// Enhanced worker configuration with fallbacks
+const WORKER_URLS = [
+  new URL("pdfjs-dist/build/pdf.worker.min.js", import.meta.url).toString(),
+  `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+  "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"
+]
+
+const initializeWorker = () => {
+  for (const url of WORKER_URLS) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = url
+      console.log("PDF worker set to:", url)
+      break
+    } catch (error) {
+      console.warn("Failed worker URL:", url)
+    }
+  }
+}
     pdfjs.GlobalWorkerOptions.workerSrc = new URL(
       'pdfjs-dist/build/pdf.worker.min.js',
       import.meta.url,

@@ -11,14 +11,14 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    host: true, // Allow external connections
-    cors: true, // Enable CORS
+    host: true,
+    cors: true,
     proxy: {
-      // Proxy API requests to backend
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
         secure: false,
+        ws: true,
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, _res) => {
             console.log('Proxy error:', err);
@@ -31,7 +31,7 @@ export default defineConfig({
           });
         },
       },
-      // Also proxy direct uploads directory for file serving
+      // Also proxy direct file access
       '/uploads': {
         target: 'http://localhost:8000',
         changeOrigin: true,
@@ -49,7 +49,6 @@ export default defineConfig({
   define: {
     global: 'globalThis',
   },
-  // Enable detailed logging
   logLevel: 'info',
   clearScreen: false,
 })
