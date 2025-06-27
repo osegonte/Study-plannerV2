@@ -5,24 +5,18 @@ import { useReadingTimer } from '@/hooks/useReadingTimer'
 import { usePDF } from '@/contexts/PDFContext'
 import { apiClient } from '@/utils/api'
 
-// Set up PDF.js worker with fallbacks
-const workerSources = [
-  new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString(),
-  `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
-  `//cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
-  `/node_modules/pdfjs-dist/build/pdf.worker.min.js`
+// CRITICAL FIX: Set up PDF.js worker correctly
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.js',
+  import.meta.url,
+).toString()
+
+// Fallback worker URLs in case the primary fails
+const WORKER_FALLBACKS = [
+  `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+  `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+  'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
 ]
-
-let workerIndex = 0
-const setWorker = () => {
-  if (workerIndex < workerSources.length) {
-    pdfjs.GlobalWorkerOptions.workerSrc = workerSources[workerIndex]
-    console.log(`Setting PDF.js worker to: ${workerSources[workerIndex]}`)
-  }
-}
-
-// Initialize first worker
-setWorker()
 
 interface PDFViewerProps {
   file: File | string
@@ -36,6 +30,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState<number>(0)
+  const [workerRetryCount, setWorkerRetryCount] = useState<number>(0)
   
   const { startTimer, stopTimer, isRunning, formattedTime } = useReadingTimer()
   const { dispatch } = usePDF()
@@ -45,25 +40,28 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
   const sessionSaveInProgress = useRef<boolean>(false)
   const lastSessionSave = useRef<number>(0)
 
-  // Memoize file URL to prevent excessive requests
+  // IMPROVED: Better file URL handling with proxy support
   const fileUrl = useMemo(() => {
     if (typeof file === 'string') {
-      // Cache the URL to prevent multiple requests
-      if (!fileUrlRef.current || fileUrlRef.current !== file) {
-        fileUrlRef.current = file
-        console.log('PDF URL cached:', file)
+      // Check if it's already a full URL
+      if (file.startsWith('http')) {
+        return file
       }
-      return fileUrlRef.current
+      // Use the API endpoint for serving files
+      if (pdfId) {
+        return `/api/pdfs/${pdfId}/file`
+      }
+      return file
     } else if (file instanceof File) {
       // Only create blob URL once
       if (!fileUrlRef.current) {
         fileUrlRef.current = URL.createObjectURL(file)
-        console.log('PDF blob URL created and cached:', fileUrlRef.current)
+        console.log('PDF blob URL created:', fileUrlRef.current)
       }
       return fileUrlRef.current
     }
     return ''
-  }, [file])
+  }, [file, pdfId])
 
   // Cleanup blob URL on unmount
   useEffect(() => {
@@ -75,13 +73,49 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     }
   }, [file])
 
+  // IMPROVED: Better error handling with worker fallbacks
+  const onDocumentLoadError = useCallback((error: Error) => {
+    console.error('PDF load error:', error)
+    
+    // Try fallback worker URLs
+    if (workerRetryCount < WORKER_FALLBACKS.length) {
+      console.log(`Trying fallback worker ${workerRetryCount + 1}:`, WORKER_FALLBACKS[workerRetryCount])
+      pdfjs.GlobalWorkerOptions.workerSrc = WORKER_FALLBACKS[workerRetryCount]
+      setWorkerRetryCount(prev => prev + 1)
+      setRetryCount(prev => prev + 1)
+      setLoading(true)
+      setError(null)
+      return
+    }
+    
+    let errorMessage = 'Failed to load PDF. '
+    
+    if (error.message.includes('worker') || error.message.includes('Worker')) {
+      errorMessage += 'PDF.js worker failed. This might be a network or browser compatibility issue.'
+    } else if (error.message.includes('Invalid PDF') || error.message.includes('format')) {
+      errorMessage += 'Invalid PDF format or corrupted file.'
+    } else if (error.message.includes('network') || error.message.includes('fetch') || error.message.includes('NetworkError')) {
+      errorMessage += 'Network error. Please check your connection and ensure the backend is running.'
+    } else if (error.message.includes('404') || error.message.includes('Not Found')) {
+      errorMessage += 'PDF file not found. It may have been deleted or moved.'
+    } else if (error.message.includes('CORS')) {
+      errorMessage += 'Cross-origin request blocked. Please check CORS configuration.'
+    } else {
+      errorMessage += error.message || 'Unknown error occurred.'
+    }
+    
+    setError(errorMessage)
+    setLoading(false)
+  }, [workerRetryCount])
+
   // Handle successful PDF load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
-    console.log('PDF loaded successfully:', { numPages, fileUrl })
+    console.log('PDF loaded successfully:', { numPages, fileUrl, workerUsed: pdfjs.GlobalWorkerOptions.workerSrc })
     setNumPages(numPages)
     setLoading(false)
     setError(null)
     setRetryCount(0)
+    setWorkerRetryCount(0)
     
     // Update context
     dispatch({ type: 'SET_TOTAL_PAGES', payload: numPages })
@@ -90,38 +124,6 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
     // Start timer for first page
     startTimer()
   }, [dispatch, startTimer, fileUrl])
-
-  // Handle PDF load error with retry logic
-  const onDocumentLoadError = useCallback((error: Error) => {
-    console.error('PDF load error:', error)
-    
-    // Try next worker source
-    if (retryCount < workerSources.length - 1) {
-      console.log('Trying alternative worker source...')
-      workerIndex++
-      setWorker()
-      setRetryCount(prev => prev + 1)
-      setLoading(true)
-      return
-    }
-    
-    let errorMessage = 'Failed to load PDF. '
-    
-    if (error.message.includes('worker')) {
-      errorMessage += 'PDF.js worker failed to load. This might be a network issue.'
-    } else if (error.message.includes('format') || error.message.includes('Invalid PDF')) {
-      errorMessage += 'Invalid PDF format or corrupted file.'
-    } else if (error.message.includes('network') || error.message.includes('fetch')) {
-      errorMessage += 'Network error. Please check your connection and ensure the backend is running.'
-    } else if (error.message.includes('404')) {
-      errorMessage += 'PDF file not found. It may have been deleted.'
-    } else {
-      errorMessage += error.message || 'Unknown error occurred.'
-    }
-    
-    setError(errorMessage)
-    setLoading(false)
-  }, [retryCount])
 
   // Debounced session saving to prevent spam
   const saveReadingSessionDebounced = useCallback(async (page: number, timeSpent: number) => {
@@ -205,22 +207,24 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
   const zoomOut = () => setScale(prev => Math.max(prev - 0.25, 0.5))
   const resetZoom = () => setScale(1.0)
 
-  // Retry loading
+  // IMPROVED: Better retry logic
   const retryLoad = () => {
     console.log('Retrying PDF load...')
     setError(null)
     setLoading(true)
     setRetryCount(0)
-    // Reset worker to first option
-    workerIndex = 0
-    setWorker()
+    setWorkerRetryCount(0)
+    // Reset to primary worker
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      'pdfjs-dist/build/pdf.worker.min.js',
+      import.meta.url,
+    ).toString()
   }
 
   // Force refresh file URL (for backend file issues)
   const refreshFile = () => {
     if (pdfId) {
-      const newUrl = `${apiClient.getPDFFileUrl(pdfId)}?t=${Date.now()}`
-      fileUrlRef.current = newUrl
+      const newUrl = `/api/pdfs/${pdfId}/file?t=${Date.now()}`
       console.log('Refreshing PDF URL:', newUrl)
       retryLoad()
     }
@@ -253,6 +257,7 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
                 <li>• Verify the PDF file exists and is not corrupted</li>
                 <li>• Try refreshing the page</li>
                 <li>• Check your internet connection</li>
+                <li>• Workers tried: {workerRetryCount}/{WORKER_FALLBACKS.length + 1}</li>
               </ul>
               {pdfId && (
                 <p className="mt-2">
@@ -381,13 +386,18 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
             loading={null}
             className="shadow-lg"
             options={{
-              cMapUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+              // CRITICAL: Better PDF.js options
+              cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
               cMapPacked: true,
-              standardFontDataUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+              standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
               withCredentials: false,
-              // Add caching options to reduce requests
               disableAutoFetch: false,
               disableStream: false,
+              useSystemFonts: true,
+              // Add HTTP headers for authentication if needed
+              httpHeaders: {
+                'Accept': 'application/pdf',
+              },
             }}
           >
             {!loading && !error && (
@@ -406,7 +416,13 @@ export default function PDFViewer({ file, pdfId }: PDFViewerProps) {
                   <div className="flex items-center justify-center h-96 bg-red-50 border border-red-200">
                     <div className="text-center">
                       <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
-                      <p className="text-red-700 text-sm">Failed to load page</p>
+                      <p className="text-red-700 text-sm">Failed to load page {currentPage}</p>
+                      <button 
+                        onClick={retryLoad}
+                        className="mt-2 text-xs text-red-600 hover:text-red-800 underline"
+                      >
+                        Retry
+                      </button>
                     </div>
                   </div>
                 }
