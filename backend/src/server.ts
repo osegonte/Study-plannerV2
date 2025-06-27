@@ -26,66 +26,81 @@ if (!fs.existsSync(uploadsDir)) {
   console.log('📁 Created uploads directory:', uploadsDir)
 }
 
-// RELAXED rate limiting for development (Stage 2)
+// RELAXED rate limiting for development
 const limiter = rateLimit({
   windowMs: 60000, // 1 minute
   max: 1000, // Very high limit for development
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip rate limiting in development for localhost
   skip: (req) => {
     return process.env.NODE_ENV === 'development' && 
            (req.ip === '127.0.0.1' || req.ip === '::1' || req.ip?.includes('localhost'))
   }
 })
 
-// CORS configuration
+// FIXED: Enhanced CORS configuration for PDF.js
 const corsOptions = {
-  origin: true,
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
-  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length']
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'Range',
+    'Accept',
+    'Accept-Encoding',
+    'Accept-Language',
+    'Cache-Control',
+    'Connection',
+    'Host',
+    'User-Agent'
+  ],
+  exposedHeaders: [
+    'Content-Range', 
+    'Accept-Ranges', 
+    'Content-Length',
+    'Content-Type',
+    'Cache-Control'
+  ]
 }
 
 // Middleware
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: false, // Disable CSP for PDF viewing
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }))
 app.use(compression())
 app.use(limiter)
-cors({
-  origin: [process.env.CORS_ORIGIN || "http://localhost:3000", "http://localhost:3000"],
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
-  allowedHeaders: ["Content-Type", "Authorization", "Range"],
-  exposedHeaders: ["Content-Range", "Accept-Ranges", "Content-Length"]
-})
+app.use(cors(corsOptions))
+app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use(logger)
 
-// Serve uploaded files with proper headers for PDFs and caching
-app.use('/uploads', (req, res, next) => {
-  // Set CORS headers for file requests
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
-  res.header('Access-Control-Allow-Headers', 'Range')
+// IMPORTANT: Add global CORS headers for all requests
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || 'http://localhost:3000')
+  res.header('Access-Control-Allow-Credentials', 'true')
+  res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS')
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range, Accept, Accept-Encoding')
+  res.header('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length')
   
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200)
   }
-  
   next()
-}, express.static(uploadsDir, {
+})
+
+// Serve uploaded files with proper headers
+app.use('/uploads', express.static(uploadsDir, {
   setHeaders: (res, filePath) => {
     if (path.extname(filePath) === '.pdf') {
       res.setHeader('Content-Type', 'application/pdf')
       res.setHeader('Accept-Ranges', 'bytes')
-      // Cache PDFs for 1 hour to reduce requests
       res.setHeader('Cache-Control', 'public, max-age=3600')
+      res.setHeader('Access-Control-Allow-Origin', '*')
     }
   }
 }))
@@ -101,88 +116,20 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
-    version: '1.2.0', // Stage 2 version
+    version: '1.2.0',
     stage: 2,
     database: {
       initialized: dbService.isInitialized(),
       singleton: true
     },
-    features: {
-      pdfViewing: true,
-      basicTimeTracking: true,
-      readingProgress: true,
-      // Stage 3+ features (not yet implemented)
-      estimatedReadingTime: false,
-      topicOrganization: false,
-      enhancedAnalytics: false
+    cors: {
+      enabled: true,
+      origins: corsOptions.origin
     },
     uploadsDir: uploadsDir,
     uploadsExists: fs.existsSync(uploadsDir)
   })
 })
-
-// Basic analytics summary endpoint (simplified for Stage 2)
-app.get('/api/analytics/summary', async (req, res) => {
-  try {
-    const dbService = DatabaseService.getInstance()
-    
-    if (!dbService.isInitialized()) {
-      return res.status(500).json({ error: 'Database not initialized' })
-    }
-    
-    const db = dbService.getDatabase()
-    
-    // Get basic statistics only (no complex analytics)
-    const basicStats = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT 
-           COUNT(DISTINCT p.id) as total_pdfs,
-           SUM(p.total_pages) as total_pages,
-           COALESCE(SUM(rp.total_time_spent), 0) as total_time_spent,
-           COALESCE(SUM(rp.pages_read), 0) as total_pages_read
-         FROM pdfs p
-         LEFT JOIN reading_progress rp ON p.id = rp.pdf_id`,
-        [],
-        (err, row) => {
-          if (err) reject(err)
-          else resolve(row)
-        }
-      )
-    })
-
-    res.json({
-      ...basicStats,
-      averageReadingSpeed: basicStats.total_pages_read > 0 
-        ? basicStats.total_time_spent / basicStats.total_pages_read 
-        : 0,
-      message: "Stage 2: Basic analytics only"
-    })
-  } catch (error) {
-    console.error('Analytics summary error:', error)
-    res.status(500).json({ error: 'Failed to generate analytics summary' })
-  }
-})
-
-// Test endpoint to list uploaded files (development only)
-if (process.env.NODE_ENV === 'development') {
-  app.get('/api/debug/uploads', (req, res) => {
-    try {
-      const files = fs.readdirSync(uploadsDir)
-      res.json({
-        uploadsDir,
-        files: files.map(file => ({
-          name: file,
-          path: path.join(uploadsDir, file),
-          exists: fs.existsSync(path.join(uploadsDir, file)),
-          url: `http://localhost:${PORT}/uploads/${file}`,
-          stats: fs.statSync(path.join(uploadsDir, file))
-        }))
-      })
-    } catch (error) {
-      res.status(500).json({ error: error.message })
-    }
-  })
-}
 
 // Error handling middleware (must be last)
 app.use(errorHandler)
@@ -195,30 +142,28 @@ app.use('*', (req, res) => {
   })
 })
 
-// Initialize database ONCE and start server
+// Initialize database and start server
 async function startServer() {
   try {
     console.log('🚀 Initializing Study Planner Backend...')
     
-    // Initialize database singleton ONCE
     const dbService = DatabaseService.getInstance()
     await dbService.initialize()
     
     console.log('✅ Database singleton initialized successfully')
     
-    // Start server
-// Set server timeout
-const server = 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`)
       console.log(`📊 Environment: ${process.env.NODE_ENV}`)
-      console.log(`🔗 CORS origin: ${process.env.CORS_ORIGIN}`)
+      console.log(`🔗 CORS origins: ${corsOptions.origin.join(', ')}`)
       console.log(`📁 Uploads directory: ${uploadsDir}`)
       console.log(`📄 Static files served at: http://localhost:${PORT}/uploads/`)
       console.log(`📚 Stage 2: Basic Reading Time Tracking - ACTIVE`)
-      console.log(`⏳ Next: Stage 3 (Estimated Reading Time)`)
-      console.log(`✅ DATABASE: Singleton pattern active - NO multiple connections`)
+      console.log(`✅ CORS: Enhanced configuration for PDF.js`)
     })
+    
+    server.timeout = 120000 // 2 minutes timeout
+    
   } catch (error) {
     console.error('❌ Failed to start server:', error)
     process.exit(1)
@@ -240,7 +185,6 @@ process.on('SIGINT', async () => {
   process.exit(0)
 })
 
-// Start the server
 startServer()
 
 export default app
