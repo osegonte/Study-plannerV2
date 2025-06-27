@@ -19,11 +19,6 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
-      },
-      '/uploads': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        secure: false,
       }
     },
   },
@@ -31,7 +26,9 @@ export default defineConfig({
     include: [
       '@react-pdf-viewer/core',
       '@react-pdf-viewer/default-layout',
-      'pdfjs-dist'
+      '@react-pdf-viewer/page-navigation',
+      'pdfjs-dist',
+      'react-pdf'
     ],
   },
   define: {
