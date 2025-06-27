@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save, Play, Pause } from 'lucide-react';
 import { useTimeTracking } from '../../hooks/useTimeTracking';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';
 import ReadingTimer from '../timer/ReadingTimer';
@@ -17,6 +17,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isPageChanging, setIsPageChanging] = useState(false);
 
   const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById } = useStudyPlanner();
 
@@ -40,65 +41,77 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   useEffect(() => {
     if (existingDocument && existingDocument.currentPage) {
       setPageNumber(existingDocument.currentPage);
+      console.log(`📖 Loaded document at page ${existingDocument.currentPage}`);
     }
   }, [existingDocument]);
 
   // PDF document load success
   const onDocumentLoadSuccess = useCallback(({ numPages }) => {
+    console.log(`📄 PDF loaded successfully with ${numPages} pages`);
     setNumPages(numPages);
     setLoading(false);
     setError(null);
-    console.log(`PDF loaded successfully with ${numPages} pages`);
     
     // Update document with page count
     if (documentId) {
       updateDocumentProgress(documentId, pageNumber, numPages);
     }
     
-    // Start timing for current page
-    startPageTimer(pageNumber, fileName);
+    // Start timing for current page after a brief delay to ensure everything is ready
+    setTimeout(() => {
+      startPageTimer(pageNumber, fileName);
+    }, 100);
   }, [documentId, pageNumber, updateDocumentProgress, startPageTimer, fileName]);
 
   // PDF document load error
   const onDocumentLoadError = useCallback((error) => {
+    console.error('📄 PDF load error:', error);
     setError('Failed to load PDF. Please try again with a different file.');
     setLoading(false);
     stopPageTimer();
-    console.error('PDF load error:', error);
   }, [stopPageTimer]);
 
-  const goToPrevPage = () => {
+  // Handle page navigation with proper timer management
+  const navigateToPage = useCallback((newPage) => {
+    if (newPage === pageNumber || isPageChanging) return;
+    
+    console.log(`🔄 Navigating from page ${pageNumber} to page ${newPage}`);
+    setIsPageChanging(true);
+    
+    // Stop current timer and save time
+    stopPageTimer();
+    
+    // Update page number
+    setPageNumber(newPage);
+    
+    // Update document progress
+    if (documentId) {
+      updateDocumentProgress(documentId, newPage, numPages);
+    }
+    
+    // Start timer for new page after a brief delay
+    setTimeout(() => {
+      startPageTimer(newPage, fileName);
+      setIsPageChanging(false);
+    }, 100);
+  }, [pageNumber, isPageChanging, stopPageTimer, documentId, numPages, updateDocumentProgress, startPageTimer, fileName]);
+
+  const goToPrevPage = useCallback(() => {
     const newPage = Math.max(pageNumber - 1, 1);
-    if (newPage !== pageNumber) {
-      setPageNumber(newPage);
-      if (documentId) {
-        updateDocumentProgress(documentId, newPage, numPages);
-      }
-      startPageTimer(newPage, fileName);
-    }
-  };
+    navigateToPage(newPage);
+  }, [pageNumber, navigateToPage]);
 
-  const goToNextPage = () => {
+  const goToNextPage = useCallback(() => {
     const newPage = Math.min(pageNumber + 1, numPages || 1);
-    if (newPage !== pageNumber) {
-      setPageNumber(newPage);
-      if (documentId) {
-        updateDocumentProgress(documentId, newPage, numPages);
-      }
-      startPageTimer(newPage, fileName);
-    }
-  };
+    navigateToPage(newPage);
+  }, [pageNumber, numPages, navigateToPage]);
 
-  const goToPage = (page) => {
+  const goToPage = useCallback((page) => {
     const pageNum = parseInt(page);
-    if (pageNum >= 1 && pageNum <= numPages && pageNum !== pageNumber) {
-      setPageNumber(pageNum);
-      if (documentId) {
-        updateDocumentProgress(documentId, pageNum, numPages);
-      }
-      startPageTimer(pageNum, fileName);
+    if (pageNum >= 1 && pageNum <= numPages) {
+      navigateToPage(pageNum);
     }
-  };
+  }, [numPages, navigateToPage]);
 
   const zoomIn = () => setScale(prev => Math.min(prev + 0.2, 3.0));
   const zoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.5));
@@ -107,45 +120,54 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const saveProgress = useCallback(() => {
     if (documentId && Object.keys(pageTimes).length > 0) {
       updateDocumentPageTimes(documentId, pageTimes);
-      console.log('Saved progress for document:', fileName);
+      console.log(`💾 Progress saved for ${fileName}: ${Object.keys(pageTimes).length} pages`);
     }
   }, [documentId, pageTimes, updateDocumentPageTimes, fileName]);
 
-  // Handle page changes for timing
-  useEffect(() => {
-    if (file && numPages) {
+  // Manual timer control for debugging
+  const toggleTimer = () => {
+    if (isTracking) {
+      stopPageTimer();
+    } else {
       startPageTimer(pageNumber, fileName);
     }
-  }, [pageNumber, file, numPages, startPageTimer, fileName]);
+  };
 
   // Auto-save progress periodically
   useEffect(() => {
-    const interval = setInterval(saveProgress, 30000); // Save every 30 seconds
+    const interval = setInterval(() => {
+      if (Object.keys(pageTimes).length > 0) {
+        saveProgress();
+      }
+    }, 30000); // Save every 30 seconds
     return () => clearInterval(interval);
-  }, [saveProgress]);
-
-  // Stop timer when component unmounts
-  useEffect(() => {
-    return () => {
-      stopPageTimer();
-      saveProgress();
-    };
-  }, [stopPageTimer, saveProgress]);
+  }, [saveProgress, pageTimes]);
 
   // Handle browser tab visibility for accurate timing
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        console.log('👁️ Tab hidden - stopping timer');
         stopPageTimer();
         saveProgress();
-      } else if (file && numPages) {
+      } else if (file && numPages && !isPageChanging) {
+        console.log('👁️ Tab visible - starting timer');
         startPageTimer(pageNumber, fileName);
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [file, numPages, pageNumber, startPageTimer, stopPageTimer, saveProgress, fileName]);
+  }, [file, numPages, pageNumber, startPageTimer, stopPageTimer, saveProgress, fileName, isPageChanging]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      console.log('🧹 PDFViewer cleanup');
+      stopPageTimer();
+      saveProgress();
+    };
+  }, [stopPageTimer, saveProgress]);
 
   if (!file) {
     return (
@@ -168,6 +190,9 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
                 <p className="text-red-800">{error}</p>
+                <p className="text-red-600 text-sm mt-1">
+                  Try refreshing the page or uploading a different PDF file.
+                </p>
               </div>
             )}
 
@@ -179,7 +204,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
             )}
 
             <div className="bg-white rounded-lg shadow-sm">
-              {/* Toolbar */}
+              {/* Enhanced Toolbar */}
               <div className="border-b px-6 py-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center space-x-4">
@@ -187,7 +212,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={goToPrevPage}
-                        disabled={pageNumber <= 1}
+                        disabled={pageNumber <= 1 || isPageChanging}
                         className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         title="Previous page"
                       >
@@ -201,19 +226,39 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                           max={numPages || 1}
                           value={pageNumber}
                           onChange={(e) => goToPage(e.target.value)}
-                          className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          disabled={isPageChanging}
+                          className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
                           title="Go to page"
                         />
                         <span className="text-gray-600">of {numPages || '?'}</span>
+                        {isPageChanging && (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                        )}
                       </div>
                       
                       <button
                         onClick={goToNextPage}
-                        disabled={pageNumber >= (numPages || 1)}
+                        disabled={pageNumber >= (numPages || 1) || isPageChanging}
                         className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         title="Next page"
                       >
                         <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Timer Control (for debugging) */}
+                    <div className="flex items-center space-x-2 border-l pl-4">
+                      <button
+                        onClick={toggleTimer}
+                        className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-sm ${
+                          isTracking 
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        title={isTracking ? "Stop timer" : "Start timer"}
+                      >
+                        {isTracking ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                        <span>Timer</span>
                       </button>
                     </div>
 
@@ -285,6 +330,17 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                   totalPages={numPages || 0}
                   currentPage={pageNumber}
                 />
+
+                {/* Debug Info */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="mt-2 text-xs text-gray-500 font-mono bg-gray-50 p-2 rounded">
+                    Timer: {isTracking ? 'ON' : 'OFF'} | 
+                    Current: {currentSessionTime}s | 
+                    Page: {pageNumber} | 
+                    Total pages tracked: {Object.keys(pageTimes).length} |
+                    Changing: {isPageChanging ? 'YES' : 'NO'}
+                  </div>
+                )}
               </div>
 
               {/* PDF Display Area */}

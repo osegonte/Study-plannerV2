@@ -4,7 +4,7 @@ export const useTimeTracking = (initialPageTimes = {}) => {
   const [isTracking, setIsTracking] = useState(false);
   const [currentSessionTime, setCurrentSessionTime] = useState(0);
   const [pageStartTime, setPageStartTime] = useState(null);
-  const [pageTimes, setPageTimes] = useState(initialPageTimes); // Initialize with existing data
+  const [pageTimes, setPageTimes] = useState(initialPageTimes);
   const [sessionData, setSessionData] = useState({
     totalTime: 0,
     pagesRead: 0,
@@ -12,23 +12,41 @@ export const useTimeTracking = (initialPageTimes = {}) => {
     currentFileName: null
   });
 
+  // Refs to avoid stale closures
   const intervalRef = useRef(null);
   const currentPageRef = useRef(null);
+  const pageStartTimeRef = useRef(null);
+  const isTrackingRef = useRef(false);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    isTrackingRef.current = isTracking;
+  }, [isTracking]);
+
+  useEffect(() => {
+    pageStartTimeRef.current = pageStartTime;
+  }, [pageStartTime]);
 
   // Initialize with existing page times
   useEffect(() => {
     if (initialPageTimes && Object.keys(initialPageTimes).length > 0) {
-      setPageTimes(initialPageTimes);
-      console.log('Initialized with existing page times:', initialPageTimes);
+      setPageTimes(prev => ({
+        ...prev,
+        ...initialPageTimes
+      }));
+      console.log('📚 Initialized with existing page times:', initialPageTimes);
     }
-  }, [initialPageTimes]);
+  }, []);
 
   // Start tracking time for a specific page
   const startPageTimer = useCallback((pageNumber, fileName = null) => {
-    // Save time for previous page if exists
-    if (currentPageRef.current && pageStartTime) {
-      const timeSpent = Math.floor((Date.now() - pageStartTime) / 1000);
+    console.log(`🎯 Starting timer for page ${pageNumber}`);
+    
+    // Save time for previous page if timer was running
+    if (currentPageRef.current && pageStartTimeRef.current && isTrackingRef.current) {
+      const timeSpent = Math.floor((Date.now() - pageStartTimeRef.current) / 1000);
       if (timeSpent > 0) {
+        console.log(`⏱️ Saving ${timeSpent}s for previous page ${currentPageRef.current}`);
         setPageTimes(prev => ({
           ...prev,
           [currentPageRef.current]: (prev[currentPageRef.current] || 0) + timeSpent
@@ -37,9 +55,13 @@ export const useTimeTracking = (initialPageTimes = {}) => {
     }
 
     // Start timer for new page
+    const startTime = Date.now();
     currentPageRef.current = pageNumber;
-    setPageStartTime(Date.now());
+    setPageStartTime(startTime);
+    pageStartTimeRef.current = startTime;
     setIsTracking(true);
+    isTrackingRef.current = true;
+    setCurrentSessionTime(0);
 
     // Update session data
     if (fileName) {
@@ -49,14 +71,17 @@ export const useTimeTracking = (initialPageTimes = {}) => {
       }));
     }
 
-    console.log(`⏱️ Started timer for page ${pageNumber}`);
-  }, [pageStartTime]);
+    console.log(`✅ Timer started for page ${pageNumber} at ${new Date(startTime).toLocaleTimeString()}`);
+  }, []);
 
   // Stop tracking time
   const stopPageTimer = useCallback(() => {
-    if (currentPageRef.current && pageStartTime) {
-      const timeSpent = Math.floor((Date.now() - pageStartTime) / 1000);
+    console.log('🛑 Stopping page timer');
+    
+    if (currentPageRef.current && pageStartTimeRef.current && isTrackingRef.current) {
+      const timeSpent = Math.floor((Date.now() - pageStartTimeRef.current) / 1000);
       if (timeSpent > 0) {
+        console.log(`⏱️ Saving ${timeSpent}s for page ${currentPageRef.current}`);
         setPageTimes(prev => ({
           ...prev,
           [currentPageRef.current]: (prev[currentPageRef.current] || 0) + timeSpent
@@ -65,14 +90,32 @@ export const useTimeTracking = (initialPageTimes = {}) => {
     }
 
     setIsTracking(false);
+    isTrackingRef.current = false;
     setPageStartTime(null);
-    currentPageRef.current = null;
+    pageStartTimeRef.current = null;
+    setCurrentSessionTime(0);
 
-    console.log('⏹️ Stopped page timer');
-  }, [pageStartTime]);
+    console.log('✅ Timer stopped and time saved');
+  }, []);
 
   // Reset all timing data
   const resetTimingData = useCallback(() => {
+    console.log('🔄 Resetting all timing data');
+    
+    // Stop current timer
+    setIsTracking(false);
+    isTrackingRef.current = false;
+    setPageStartTime(null);
+    pageStartTimeRef.current = null;
+    currentPageRef.current = null;
+    
+    // Clear interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    // Reset all data
     setPageTimes({});
     setCurrentSessionTime(0);
     setSessionData({
@@ -81,20 +124,8 @@ export const useTimeTracking = (initialPageTimes = {}) => {
       averageTimePerPage: 0,
       currentFileName: null
     });
-    stopPageTimer();
-    console.log('🔄 Reset all timing data');
-  }, [stopPageTimer]);
-
-  // Initialize timing data with existing data (for loaded documents)
-  const initializeWithExistingData = useCallback((existingPageTimes, fileName) => {
-    if (existingPageTimes && Object.keys(existingPageTimes).length > 0) {
-      setPageTimes(existingPageTimes);
-      setSessionData(prev => ({
-        ...prev,
-        currentFileName: fileName
-      }));
-      console.log('📚 Initialized with existing timing data:', existingPageTimes);
-    }
+    
+    console.log('✅ All timing data reset');
   }, []);
 
   // Get time spent on a specific page
@@ -107,12 +138,12 @@ export const useTimeTracking = (initialPageTimes = {}) => {
     return Object.values(pageTimes).reduce((total, time) => total + time, 0);
   }, [pageTimes]);
 
-  // Update current session time every second
+  // Update current session time every second when tracking
   useEffect(() => {
-    if (isTracking) {
+    if (isTracking && pageStartTime) {
       intervalRef.current = setInterval(() => {
-        if (pageStartTime) {
-          const currentTime = Math.floor((Date.now() - pageStartTime) / 1000);
+        if (pageStartTimeRef.current && isTrackingRef.current) {
+          const currentTime = Math.floor((Date.now() - pageStartTimeRef.current) / 1000);
           setCurrentSessionTime(currentTime);
         }
       }, 1000);
@@ -121,12 +152,15 @@ export const useTimeTracking = (initialPageTimes = {}) => {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
-      setCurrentSessionTime(0);
+      if (!isTracking) {
+        setCurrentSessionTime(0);
+      }
     }
 
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
     };
   }, [isTracking, pageStartTime]);
@@ -148,8 +182,16 @@ export const useTimeTracking = (initialPageTimes = {}) => {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      console.log('🧹 Cleaning up useTimeTracking');
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+      }
+      // Save any remaining time before unmount
+      if (currentPageRef.current && pageStartTimeRef.current && isTrackingRef.current) {
+        const timeSpent = Math.floor((Date.now() - pageStartTimeRef.current) / 1000);
+        if (timeSpent > 0) {
+          console.log(`💾 Final save: ${timeSpent}s for page ${currentPageRef.current}`);
+        }
       }
     };
   }, []);
@@ -165,7 +207,6 @@ export const useTimeTracking = (initialPageTimes = {}) => {
     startPageTimer,
     stopPageTimer,
     resetTimingData,
-    initializeWithExistingData,
     getPageTime,
     getTotalTime
   };
