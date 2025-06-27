@@ -64,7 +64,129 @@ export const calculateDocumentEstimates = (pageTimes, currentPage, totalPages) =
  * @param {Object} topicGoals - Topic-specific goals
  * @returns {Object} Topic reading estimates
  */
+/**
+ * Calculate topic-level reading estimates using cross-document data
+ * @param {Array} documents - Documents in the topic
+ * @param {Object} topicGoals - Topic-specific goals
+ * @returns {Object} Topic reading estimates
+ */
 export const calculateTopicEstimates = (documents, topicGoals = {}) => {
+  if (!documents || documents.length === 0) {
+    return {
+      totalDocuments: 0,
+      totalPages: 0,
+      totalEstimatedTime: 0,
+      timeRemaining: 0,
+      averageProgress: 0,
+      documentsCompleted: 0,
+      estimatedCompletionDate: null,
+      dailyReadingRequired: 0,
+      weeklyReadingRequired: 0,
+      goalProgress: {
+        timeGoal: null,
+        pageGoal: null,
+        completionGoal: null
+      }
+    };
+  }
+
+  // Calculate topic-wide reading speed from all documents with timing data
+  const allTopicPageTimes = {};
+  documents.forEach(doc => {
+    if (doc.pageTimes && Object.keys(doc.pageTimes).length > 0) {
+      Object.assign(allTopicPageTimes, doc.pageTimes);
+    }
+  });
+
+  // Get topic-wide reading speed
+  const topicReadingSpeed = calculateAverageReadingTime(allTopicPageTimes);
+  const hasTopicReadingData = Object.keys(allTopicPageTimes).length > 0;
+
+  let totalEstimatedTime = 0;
+  let totalTimeRemaining = 0;
+  let totalPages = 0;
+  let totalProgress = 0;
+  let documentsCompleted = 0;
+  let documentsWithEstimates = 0;
+
+  // Calculate estimates for each document
+  documents.forEach(doc => {
+    const docPageTimes = doc.pageTimes || {};
+    const docPages = doc.totalPages || 0;
+    const currentPage = doc.currentPage || 1;
+
+    if (docPages === 0) return; // Skip documents without page count
+
+    let docEstimatedTime = 0;
+    let docTimeRemaining = 0;
+    let docProgress = 0;
+
+    if (Object.keys(docPageTimes).length > 0) {
+      // Document has its own timing data - use it
+      const docEstimates = calculateDocumentEstimates(docPageTimes, currentPage, docPages);
+      docEstimatedTime = docEstimates.totalEstimatedTime;
+      docTimeRemaining = docEstimates.timeRemaining;
+      docProgress = docEstimates.completionPercentage;
+      documentsWithEstimates++;
+    } else if (hasTopicReadingData && topicReadingSpeed > 0) {
+      // Document has no timing data but topic has reading speed data
+      // Use topic-wide reading speed to estimate this document
+      docEstimatedTime = topicReadingSpeed * docPages;
+      const pagesRemaining = Math.max(docPages - currentPage + 1, 0);
+      docTimeRemaining = topicReadingSpeed * pagesRemaining;
+      docProgress = (currentPage / docPages) * 100;
+      documentsWithEstimates++;
+      
+      console.log(`📊 Estimated ${doc.name}: ${formatDuration(docEstimatedTime)} total, ${formatDuration(docTimeRemaining)} remaining (using topic reading speed: ${(3600/topicReadingSpeed).toFixed(1)} p/h)`);
+    } else {
+      // No timing data available - can't estimate
+      docProgress = (currentPage / docPages) * 100;
+    }
+
+    totalEstimatedTime += docEstimatedTime;
+    totalTimeRemaining += docTimeRemaining;
+    totalPages += docPages;
+    totalProgress += docProgress;
+    
+    if (docProgress >= 100) {
+      documentsCompleted++;
+    }
+  });
+
+  const averageProgress = documents.length > 0 ? totalProgress / documents.length : 0;
+  
+  // Calculate completion date based on reading goals
+  const estimatedCompletionDate = calculateTopicCompletionDate(
+    totalTimeRemaining,
+    topicGoals
+  );
+
+  // Calculate daily/weekly reading requirements
+  const { dailyReadingRequired, weeklyReadingRequired } = calculateReadingRequirements(
+    totalTimeRemaining,
+    topicGoals,
+    estimatedCompletionDate
+  );
+
+  // Calculate goal progress
+  const goalProgress = calculateGoalProgress(documents, topicGoals);
+
+  return {
+    totalDocuments: documents.length,
+    totalPages,
+    totalEstimatedTime,
+    timeRemaining: totalTimeRemaining,
+    averageProgress,
+    documentsCompleted,
+    documentsWithEstimates,
+    estimatedCompletionDate,
+    dailyReadingRequired,
+    weeklyReadingRequired,
+    goalProgress,
+    topicReadingSpeed, // Include for debugging
+    hasTopicReadingData
+  };
+};) => {
   if (!documents || documents.length === 0) {
     return {
       totalDocuments: 0,
@@ -368,4 +490,242 @@ export const calculateReadingVelocity = (pageTimes) => {
   else if (improvement < -10) trend = 'declining';
   
   return { trend, velocity, improvement: Math.round(improvement) };
+};
+/**
+ * Calculate average reading time per page from page timing data
+ * @param {Object} pageTimes - Object with page numbers as keys and time in seconds as values
+ * @returns {number} Average time per page in seconds
+ */
+export const calculateAverageReadingTime = (pageTimes) => {
+  const times = Object.values(pageTimes).filter(time => time > 0);
+  if (times.length === 0) return 0;
+  
+  return times.reduce((sum, time) => sum + time, 0) / times.length;
+};
+
+/**
+ * Calculate median reading time per page (more robust than average)
+ * @param {Object} pageTimes - Object with page numbers as keys and time in seconds as values
+ * @returns {number} Median time per page in seconds
+ */
+export const calculateMedianReadingTime = (pageTimes) => {
+  const times = Object.values(pageTimes).filter(time => time > 0).sort((a, b) => a - b);
+  if (times.length === 0) return 0;
+  
+  const mid = Math.floor(times.length / 2);
+  return times.length % 2 === 0 
+    ? (times[mid - 1] + times[mid]) / 2 
+    : times[mid];
+};
+
+/**
+ * Calculate reading speed in pages per hour
+ * @param {Object} pageTimes - Object with page numbers as keys and time in seconds as values
+ * @returns {number} Pages per hour
+ */
+export const calculateReadingSpeed = (pageTimes) => {
+  const averageTimePerPage = calculateAverageReadingTime(pageTimes);
+  if (averageTimePerPage <= 0) return 0;
+  
+  return 3600 / averageTimePerPage; // 3600 seconds in an hour
+};
+
+/**
+ * Estimate total reading time for entire document
+ * @param {number} averageTimePerPage - Average time per page in seconds
+ * @param {number} totalPages - Total number of pages in document
+ * @param {number} pagesRead - Number of pages already read
+ * @returns {Object} Estimation data
+ */
+export const estimateTotalReadingTime = (averageTimePerPage, totalPages, pagesRead = 0) => {
+  if (averageTimePerPage <= 0 || totalPages <= 0) {
+    return {
+      totalEstimate: 0,
+      remainingEstimate: 0,
+      completionPercentage: 0,
+      confidence: 'low'
+    };
+  }
+
+  const totalEstimate = averageTimePerPage * totalPages;
+  const remainingPages = Math.max(totalPages - pagesRead, 0);
+  const remainingEstimate = averageTimePerPage * remainingPages;
+  const completionPercentage = pagesRead > 0 ? (pagesRead / totalPages) * 100 : 0;
+  
+  // Confidence based on number of pages read
+  let confidence = 'low';
+  if (pagesRead >= 5) confidence = 'medium';
+  if (pagesRead >= 10) confidence = 'high';
+  if (pagesRead >= totalPages * 0.2) confidence = 'very-high';
+
+  return {
+    totalEstimate,
+    remainingEstimate,
+    completionPercentage,
+    confidence,
+    averageTimePerPage
+  };
+};
+
+/**
+ * Predict completion time based on current pace
+ * @param {Object} pageTimes - Page timing data
+ * @param {number} currentPage - Current page number
+ * @param {number} totalPages - Total pages in document
+ * @returns {Object} Completion prediction
+ */
+export const predictCompletionTime = (pageTimes, currentPage, totalPages) => {
+  const averageTime = calculateAverageReadingTime(pageTimes);
+  const medianTime = calculateMedianReadingTime(pageTimes);
+  const pagesRead = Object.keys(pageTimes).length;
+  
+  if (averageTime <= 0) {
+    return {
+      estimatedFinishTime: null,
+      remainingMinutes: 0,
+      useMedian: false,
+      confidence: 'low'
+    };
+  }
+
+  // Use median if we have enough data points and there's significant variance
+  const useMedian = pagesRead >= 5 && Math.abs(averageTime - medianTime) > averageTime * 0.3;
+  const timePerPage = useMedian ? medianTime : averageTime;
+  
+  const remainingPages = Math.max(totalPages - currentPage, 0);
+  const remainingSeconds = timePerPage * remainingPages;
+  const remainingMinutes = Math.ceil(remainingSeconds / 60);
+  
+  const now = new Date();
+  const estimatedFinishTime = new Date(now.getTime() + (remainingSeconds * 1000));
+  
+  let confidence = 'low';
+  if (pagesRead >= 3) confidence = 'medium';
+  if (pagesRead >= 7) confidence = 'high';
+  if (pagesRead >= totalPages * 0.15) confidence = 'very-high';
+
+  return {
+    estimatedFinishTime,
+    remainingMinutes,
+    useMedian,
+    confidence,
+    timePerPage
+  };
+};
+
+/**
+ * Format time for display (more detailed)
+ * @param {number} seconds - Time in seconds
+ * @returns {string} Formatted time string
+ */
+export const formatDetailedDuration = (seconds) => {
+  if (seconds < 60) {
+    return `${Math.round(seconds)} seconds`;
+  } else if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return secs > 0 ? `${minutes} min ${secs}s` : `${minutes} min`;
+  } else {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.round((seconds % 3600) / 60);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+};
+
+/**
+ * Get confidence level description
+ * @param {string} confidence - Confidence level
+ * @returns {Object} Confidence info
+ */
+export const getConfidenceInfo = (confidence) => {
+  const confidenceMap = {
+    'low': { 
+      label: 'Low', 
+      color: 'text-gray-500', 
+      bgColor: 'bg-gray-100',
+      description: 'Need more data for accurate estimates' 
+    },
+    'medium': { 
+      label: 'Medium', 
+      color: 'text-yellow-600', 
+      bgColor: 'bg-yellow-100',
+      description: 'Estimates based on limited data' 
+    },
+    'high': { 
+      label: 'High', 
+      color: 'text-blue-600', 
+      bgColor: 'bg-blue-100',
+      description: 'Reliable estimates based on reading pattern' 
+    },
+    'very-high': { 
+      label: 'Very High', 
+      color: 'text-green-600', 
+      bgColor: 'bg-green-100',
+      description: 'Highly accurate estimates' 
+    }
+  };
+  
+  return confidenceMap[confidence] || confidenceMap['low'];
+};
+
+/**
+ * Get topic-wide reading speed from all documents with timing data
+ * @param {Array} documents - All documents in the topic
+ * @returns {Object} Topic reading statistics
+ */
+export const getTopicReadingStats = (documents) => {
+  const allPageTimes = {};
+  let totalDocumentsWithData = 0;
+  let totalPagesWithData = 0;
+
+  documents.forEach(doc => {
+    if (doc.pageTimes && Object.keys(doc.pageTimes).length > 0) {
+      Object.assign(allPageTimes, doc.pageTimes);
+      totalDocumentsWithData++;
+      totalPagesWithData += Object.keys(doc.pageTimes).length;
+    }
+  });
+
+  const averageTimePerPage = calculateAverageReadingTime(allPageTimes);
+  const readingSpeed = averageTimePerPage > 0 ? 3600 / averageTimePerPage : 0;
+
+  return {
+    averageTimePerPage,
+    readingSpeed,
+    totalPagesWithData,
+    totalDocumentsWithData,
+    hasData: totalPagesWithData > 0,
+    confidence: totalPagesWithData >= 10 ? 'high' : totalPagesWithData >= 5 ? 'medium' : 'low'
+  };
+};
+
+/**
+ * Estimate time for a new document based on topic reading speed
+ * @param {number} documentPages - Total pages in the new document
+ * @param {number} currentPage - Current page in the document
+ * @param {Object} topicStats - Topic reading statistics
+ * @returns {Object} Document time estimates
+ */
+export const estimateDocumentFromTopicStats = (documentPages, currentPage, topicStats) => {
+  if (!topicStats.hasData || documentPages === 0) {
+    return {
+      totalEstimatedTime: 0,
+      timeRemaining: 0,
+      completionPercentage: 0,
+      confidence: 'none'
+    };
+  }
+
+  const totalEstimatedTime = topicStats.averageTimePerPage * documentPages;
+  const pagesRemaining = Math.max(documentPages - currentPage + 1, 0);
+  const timeRemaining = topicStats.averageTimePerPage * pagesRemaining;
+  const completionPercentage = (currentPage / documentPages) * 100;
+
+  return {
+    totalEstimatedTime,
+    timeRemaining,
+    completionPercentage,
+    confidence: topicStats.confidence,
+    estimatedFromTopic: true
+  };
 };

@@ -24,7 +24,7 @@ import {
   calculateTopicEstimates, 
   calculateOverallProgress, 
   formatDuration 
-} from './utils/timeCalculations';
+, getTopicReadingStats } from './utils/timeCalculations';
 import './styles/globals.css';
 
 const AppContent = () => {
