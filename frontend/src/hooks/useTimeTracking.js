@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-export const useTimeTracking = () => {
+export const useTimeTracking = (initialPageTimes = {}) => {
   const [isTracking, setIsTracking] = useState(false);
   const [currentSessionTime, setCurrentSessionTime] = useState(0);
   const [pageStartTime, setPageStartTime] = useState(null);
-  const [pageTimes, setPageTimes] = useState({}); // { pageNumber: totalTimeInSeconds }
+  const [pageTimes, setPageTimes] = useState(initialPageTimes); // Initialize with existing data
   const [sessionData, setSessionData] = useState({
     totalTime: 0,
     pagesRead: 0,
@@ -14,6 +14,14 @@ export const useTimeTracking = () => {
 
   const intervalRef = useRef(null);
   const currentPageRef = useRef(null);
+
+  // Initialize with existing page times
+  useEffect(() => {
+    if (initialPageTimes && Object.keys(initialPageTimes).length > 0) {
+      setPageTimes(initialPageTimes);
+      console.log('Initialized with existing page times:', initialPageTimes);
+    }
+  }, [initialPageTimes]);
 
   // Start tracking time for a specific page
   const startPageTimer = useCallback((pageNumber, fileName = null) => {
@@ -76,6 +84,18 @@ export const useTimeTracking = () => {
     stopPageTimer();
     console.log('🔄 Reset all timing data');
   }, [stopPageTimer]);
+
+  // Initialize timing data with existing data (for loaded documents)
+  const initializeWithExistingData = useCallback((existingPageTimes, fileName) => {
+    if (existingPageTimes && Object.keys(existingPageTimes).length > 0) {
+      setPageTimes(existingPageTimes);
+      setSessionData(prev => ({
+        ...prev,
+        currentFileName: fileName
+      }));
+      console.log('📚 Initialized with existing timing data:', existingPageTimes);
+    }
+  }, []);
 
   // Get time spent on a specific page
   const getPageTime = useCallback((pageNumber) => {
@@ -145,6 +165,7 @@ export const useTimeTracking = () => {
     startPageTimer,
     stopPageTimer,
     resetTimingData,
+    initializeWithExistingData,
     getPageTime,
     getTotalTime
   };
