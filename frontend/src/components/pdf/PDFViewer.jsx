@@ -3,61 +3,18 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save, Play, Pause } from 'lucide-react';
 import { useTimeTracking } from '../../hooks/useTimeTracking';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';
+import { pdfFileHandler, PDFErrorHandler } from '../../utils/pdfFileHandler'; // 🆕 ADD this import
 import ReadingTimer from '../timer/ReadingTimer';
 import TimeTrackingStats from '../timer/TimeTrackingStats';
 import ReadingEstimates from '../timer/ReadingEstimates';
 import ReadingSpeedIndicator from '../timer/ReadingSpeedIndicator';
 
-// Fix PDF.js worker path with stable version
-pdfjs.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-
-// Error Boundary Component
-class PDFErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('PDF Error Boundary caught an error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="text-center py-12 bg-red-50 border border-red-200 rounded-lg m-4">
-          <div className="text-red-600 mb-2 text-lg font-semibold">PDF Loading Error</div>
-          <p className="text-gray-600 text-sm mb-4">
-            There was an error loading the PDF. This could be due to:
-          </p>
-          <ul className="text-left max-w-md mx-auto text-sm text-gray-600 mb-4">
-            <li>• Corrupted PDF file</li>
-            <li>• Unsupported PDF format</li>
-            <li>• Network connectivity issues</li>
-            <li>• File size too large</li>
-          </ul>
-          <button 
-            onClick={() => {
-              this.setState({ hasError: false, error: null });
-              window.location.reload();
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
+// Set up PDF.js worker
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
+  const [pdfData, setPdfData] = useState(null); // 🔄 Use pdfData instead of file
+  const [fileKey, setFileKey] = useState(null); // 🆕 ADD file key state
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
@@ -65,7 +22,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const [error, setError] = useState(null);
   const [isPageChanging, setIsPageChanging] = useState(false);
 
-  const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById } = useStudyPlanner();
+  const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById, updateDocumentCacheKey } = useStudyPlanner();
 
   // Get existing document data
   const existingDocument = documentId ? getDocumentById(documentId) : null;
@@ -83,31 +40,59 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     getPageTime
   } = useTimeTracking(initialPageTimes);
 
-  // Validate file before proceeding
+  // 🆕 Process file when component mounts or file changes
   useEffect(() => {
-    if (!file) {
-      setError('No file provided');
-      return;
-    }
+    const processFileForViewing = async () => {
+      if (!file) return;
 
-    if (!(file instanceof File)) {
-      setError('Invalid file object. Please upload the PDF again.');
-      return;
-    }
+      // Check if document already has a cache key
+      if (existingDocument?.cacheKey && pdfFileHandler.hasFile(existingDocument.cacheKey)) {
+        console.log('📄 Using existing cache key:', existingDocument.cacheKey);
+        setFileKey(existingDocument.cacheKey);
+        const arrayBuffer = pdfFileHandler.getFileForPDF(existingDocument.cacheKey);
+        setPdfData(arrayBuffer);
+        return;
+      }
 
-    if (file.type !== 'application/pdf') {
-      setError('Only PDF files are supported');
-      return;
-    }
+      setLoading(true);
+      setError(null);
 
-    if (file.size > 100 * 1024 * 1024) { // 100MB limit
-      setError('File size too large. Please use a PDF smaller than 100MB.');
-      return;
-    }
+      try {
+        console.log('🔄 Processing file for viewing:', file.name || 'uploaded-file.pdf');
+        
+        // Process the file
+        const cacheKey = await pdfFileHandler.processFile(file);
+        setFileKey(cacheKey);
+        
+        // Get ArrayBuffer for PDF viewing
+        const arrayBuffer = pdfFileHandler.getFileForPDF(cacheKey);
+        setPdfData(arrayBuffer);
+        
+        // Save cache key to document if we have a document ID
+        if (documentId && updateDocumentCacheKey) {
+          updateDocumentCacheKey(documentId, cacheKey);
+        }
+        
+        console.log('✅ File ready for viewing');
+        
+      } catch (error) {
+        console.error('❌ Error processing file:', error);
+        setError(PDFErrorHandler.getErrorMessage(error));
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    // Clear any previous errors if file is valid
-    setError(null);
-  }, [file]);
+    processFileForViewing();
+  }, [file, existingDocument?.cacheKey, documentId, updateDocumentCacheKey]);
+
+  // Initialize page number from existing document
+  useEffect(() => {
+    if (existingDocument && existingDocument.currentPage) {
+      setPageNumber(existingDocument.currentPage);
+      console.log(`📖 Loaded document at page ${existingDocument.currentPage}`);
+    }
+  }, [existingDocument]);
 
   // PDF document load success
   const onDocumentLoadSuccess = useCallback(({ numPages }) => {
@@ -121,49 +106,44 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
       updateDocumentProgress(documentId, pageNumber, numPages);
     }
     
-    // Start timing for current page
+    // Start timing for current page after a brief delay
     setTimeout(() => {
       startPageTimer(pageNumber, fileName);
     }, 100);
   }, [documentId, pageNumber, updateDocumentProgress, startPageTimer, fileName]);
 
-  // PDF document load error with better error handling
+  // PDF document load error
   const onDocumentLoadError = useCallback((error) => {
     console.error('📄 PDF load error:', error);
-    
-    let errorMessage = 'Failed to load PDF. ';
-    if (error.message?.includes('Invalid PDF')) {
-      errorMessage += 'The file appears to be corrupted or not a valid PDF format.';
-    } else if (error.message?.includes('password')) {
-      errorMessage += 'This PDF is password protected. Please use an unprotected PDF.';
-    } else if (error.message?.includes('Network')) {
-      errorMessage += 'Network error occurred. Please check your internet connection.';
-    } else {
-      errorMessage += 'Please try uploading a different PDF file.';
-    }
-    
-    setError(errorMessage);
+    setError(PDFErrorHandler.getErrorMessage(error));
     setLoading(false);
     stopPageTimer();
   }, [stopPageTimer]);
 
-  // Handle page navigation
+  // Handle page navigation with proper timer management
   const navigateToPage = useCallback((newPage) => {
-    if (newPage === pageNumber || isPageChanging || !numPages) return;
+    if (newPage === pageNumber || isPageChanging) return;
     
+    console.log(`🔄 Navigating from page ${pageNumber} to page ${newPage}`);
     setIsPageChanging(true);
+    
+    // Stop current timer and save time
     stopPageTimer();
+    
+    // Update page number
     setPageNumber(newPage);
     
+    // Update document progress
     if (documentId) {
       updateDocumentProgress(documentId, newPage, numPages);
     }
     
+    // Start timer for new page after a brief delay
     setTimeout(() => {
       startPageTimer(newPage, fileName);
       setIsPageChanging(false);
     }, 100);
-  }, [pageNumber, isPageChanging, numPages, stopPageTimer, documentId, updateDocumentProgress, startPageTimer, fileName]);
+  }, [pageNumber, isPageChanging, stopPageTimer, documentId, numPages, updateDocumentProgress, startPageTimer, fileName]);
 
   const goToPrevPage = useCallback(() => {
     const newPage = Math.max(pageNumber - 1, 1);
@@ -189,38 +169,71 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const saveProgress = useCallback(() => {
     if (documentId && Object.keys(pageTimes).length > 0) {
       updateDocumentPageTimes(documentId, pageTimes);
-      console.log(`💾 Progress saved for ${fileName}`);
+      console.log(`💾 Progress saved for ${fileName}: ${Object.keys(pageTimes).length} pages`);
     }
   }, [documentId, pageTimes, updateDocumentPageTimes, fileName]);
 
-  // Handle file validation errors
-  if (error && !loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center max-w-md mx-auto p-6">
-          <FileText className="h-16 w-16 text-red-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-red-600 mb-2">PDF Error</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
-          {onBack && (
-            <button
-              onClick={onBack}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              ← Back to Dashboard
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
+  // Manual timer control
+  const toggleTimer = () => {
+    if (isTracking) {
+      stopPageTimer();
+    } else {
+      startPageTimer(pageNumber, fileName);
+    }
+  };
 
-  if (!file) {
+  // Auto-save progress periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (Object.keys(pageTimes).length > 0) {
+        saveProgress();
+      }
+    }, 30000); // Save every 30 seconds
+    return () => clearInterval(interval);
+  }, [saveProgress, pageTimes]);
+
+  // Handle browser tab visibility for accurate timing
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('👁️ Tab hidden - stopping timer');
+        stopPageTimer();
+        saveProgress();
+      } else if (pdfData && numPages && !isPageChanging) {
+        console.log('👁️ Tab visible - starting timer');
+        startPageTimer(pageNumber, fileName);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [pdfData, numPages, pageNumber, startPageTimer, stopPageTimer, saveProgress, fileName, isPageChanging]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      console.log('🧹 PDF Viewer cleanup');
+      stopPageTimer();
+      saveProgress();
+    };
+  }, [stopPageTimer, saveProgress]);
+
+  if (!pdfData) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <FileText className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-600 mb-2">No PDF File</h2>
-          <p className="text-gray-500">Please select a PDF file to start reading.</p>
+          <h2 className="text-xl font-semibold text-gray-600 mb-2">
+            {loading ? 'Processing PDF...' : 'No PDF File'}
+          </h2>
+          <p className="text-gray-500">
+            {loading ? 'Please wait while we prepare your PDF for viewing' : 'Please select a PDF file to start reading.'}
+          </p>
+          {loading && (
+            <div className="mt-4 flex items-center justify-center">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -230,9 +243,26 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex gap-6">
+          {/* Main PDF Area */}
           <div className="flex-1">
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+                <p className="text-red-800">{error}</p>
+                <p className="text-red-600 text-sm mt-1">
+                  Try refreshing the page or uploading a different PDF file.
+                </p>
+              </div>
+            )}
+
+            {loading && (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="text-gray-600 mt-2">Loading PDF...</p>
+              </div>
+            )}
+
             <div className="bg-white rounded-lg shadow-sm">
-              {/* Toolbar */}
+              {/* Enhanced Toolbar */}
               <div className="border-b px-6 py-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center space-x-4">
@@ -242,6 +272,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                         onClick={goToPrevPage}
                         disabled={pageNumber <= 1 || isPageChanging}
                         className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Previous page"
                       >
                         <ChevronLeft className="h-4 w-4" />
                       </button>
@@ -254,17 +285,38 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                           value={pageNumber}
                           onChange={(e) => goToPage(e.target.value)}
                           disabled={isPageChanging}
-                          className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                          className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                          title="Go to page"
                         />
                         <span className="text-gray-600">of {numPages || '?'}</span>
+                        {isPageChanging && (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                        )}
                       </div>
                       
                       <button
                         onClick={goToNextPage}
                         disabled={pageNumber >= (numPages || 1) || isPageChanging}
                         className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Next page"
                       >
                         <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Timer Control */}
+                    <div className="flex items-center space-x-2 border-l pl-4">
+                      <button
+                        onClick={toggleTimer}
+                        className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-sm ${
+                          isTracking 
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        title={isTracking ? "Stop timer" : "Start timer"}
+                      >
+                        {isTracking ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                        <span>Timer</span>
                       </button>
                     </div>
 
@@ -273,7 +325,8 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                       <button
                         onClick={zoomOut}
                         disabled={scale <= 0.5}
-                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
+                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Zoom out"
                       >
                         <ZoomOut className="h-4 w-4" />
                       </button>
@@ -285,17 +338,29 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                       <button
                         onClick={zoomIn}
                         disabled={scale >= 3.0}
-                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
+                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Zoom in"
                       >
                         <ZoomIn className="h-4 w-4" />
                       </button>
                     </div>
+
+                    {/* Page Time Display */}
+                    {getPageTime(pageNumber) > 0 && (
+                      <div className="border-l pl-4">
+                        <span className="text-sm text-gray-600">
+                          This page: {Math.floor(getPageTime(pageNumber) / 60)}m {getPageTime(pageNumber) % 60}s
+                        </span>
+                      </div>
+                    )}
                   </div>
 
+                  {/* File Actions */}
                   <div className="flex items-center space-x-4">
                     <button
                       onClick={saveProgress}
                       className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                      title="Save progress"
                     >
                       <Save className="h-4 w-4" />
                       <span>Save</span>
@@ -308,7 +373,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                     {onBack && (
                       <button
                         onClick={onBack}
-                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                        className="flex items-center space-x-1 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
                       >
                         ← Back
                       </button>
@@ -316,6 +381,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                   </div>
                 </div>
 
+                {/* Reading Speed Indicator */}
                 <ReadingSpeedIndicator 
                   pageTimes={pageTimes}
                   totalPages={numPages || 0}
@@ -326,44 +392,42 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
               {/* PDF Display Area */}
               <div className="p-6">
                 <div className="bg-gray-100 rounded-lg min-h-96 flex items-center justify-center overflow-auto">
-                  <PDFErrorBoundary>
-                    <Document
-                      file={file}
-                      onLoadSuccess={onDocumentLoadSuccess}
-                      onLoadError={onDocumentLoadError}
-                      options={{
-                        cMapUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/cmaps/',
-                        cMapPacked: true,
-                        standardFontDataUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/standard_fonts/',
-                        disableTextLayer: false,
-                        disableAnnotationLayer: false
-                      }}
+                  <Document
+                    file={pdfData}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    onLoadError={onDocumentLoadError}
+                    options={{
+                      disableTextLayer: true,
+                      disableAnnotationLayer: true,
+                    }}
+                    loading={
+                      <div className="text-center py-12">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        <p className="text-gray-600 mt-2">Loading PDF document...</p>
+                      </div>
+                    }
+                    error={
+                      <div className="text-center py-12">
+                        <div className="text-red-600 mb-2">❌ Failed to load PDF</div>
+                        <p className="text-gray-600 text-sm">Please try refreshing or uploading a different file</p>
+                      </div>
+                    }
+                    className="react-pdf__Document"
+                  >
+                    <Page
+                      pageNumber={pageNumber}
+                      scale={scale}
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
                       loading={
-                        <div className="text-center py-12">
-                          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                          <p className="text-gray-600 mt-2">Loading PDF document...</p>
+                        <div className="bg-white shadow-lg rounded border p-8 animate-pulse">
+                          <div className="h-96 bg-gray-200 rounded"></div>
                         </div>
                       }
-                      error={
-                        <div className="text-center py-12">
-                          <div className="text-red-600 mb-2">❌ Failed to load PDF</div>
-                          <p className="text-gray-600 text-sm">Please try a different PDF file</p>
-                        </div>
-                      }
-                    >
-                      <Page
-                        pageNumber={pageNumber}
-                        scale={scale}
-                        loading={
-                          <div className="bg-white shadow-lg rounded border p-8 animate-pulse">
-                            <div className="h-96 bg-gray-200 rounded"></div>
-                          </div>
-                        }
-                        className="react-pdf__Page shadow-lg rounded"
-                        canvasBackground="white"
-                      />
-                    </Document>
-                  </PDFErrorBoundary>
+                      className="react-pdf__Page shadow-lg rounded"
+                      canvasBackground="white"
+                    />
+                  </Document>
                 </div>
               </div>
 
@@ -382,12 +446,16 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                       style={{ width: `${(pageNumber / numPages) * 100}%` }}
                     ></div>
                   </div>
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>Page 1</span>
+                    <span>Page {numPages}</span>
+                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Sidebar */}
+          {/* Sidebar with Timer and Stats */}
           <div className="w-80 space-y-4">
             <ReadingTimer
               isTracking={isTracking}

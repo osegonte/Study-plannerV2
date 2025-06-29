@@ -130,23 +130,6 @@ export const usePDFFiles = () => {
   }, []);
 
   /**
-   * Create a blob URL for download
-   * @param {string} cacheKey - The cache key
-   * @returns {string|null} - Blob URL
-   */
-  const createDownloadURL = useCallback((cacheKey) => {
-    return pdfFileHandler.createDataURL(cacheKey);
-  }, []);
-
-  /**
-   * Get cache statistics
-   * @returns {Object} - Cache statistics
-   */
-  const getCacheStats = useCallback(() => {
-    return pdfFileHandler.getCacheStats();
-  }, []);
-
-  /**
    * Validate if a cache key is still valid
    * @param {string} cacheKey - The cache key to validate
    * @returns {boolean} - Whether the cache key is valid
@@ -163,26 +146,6 @@ export const usePDFFiles = () => {
     }
   }, []);
 
-  /**
-   * Refresh file data (useful for error recovery)
-   * @param {string} cacheKey - The cache key to refresh
-   * @returns {ArrayBuffer|null} - Fresh ArrayBuffer
-   */
-  const refreshFileData = useCallback((cacheKey) => {
-    if (!cacheKey) return null;
-    
-    try {
-      // Get fresh copy of the ArrayBuffer
-      const freshData = pdfFileHandler.getFileForPDF(cacheKey);
-      console.log('🔄 File data refreshed:', cacheKey);
-      return freshData;
-    } catch (error) {
-      console.error('❌ Error refreshing file data:', error);
-      setError('Failed to refresh file data');
-      return null;
-    }
-  }, []);
-
   return {
     // State
     loading,
@@ -196,10 +159,7 @@ export const usePDFFiles = () => {
     hasFile,
     removeFile,
     clearAllFiles,
-    createDownloadURL,
-    getCacheStats,
     validateCacheKey,
-    refreshFileData,
     
     // Utilities
     setError

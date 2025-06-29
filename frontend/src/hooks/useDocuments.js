@@ -35,6 +35,7 @@ export const useDocuments = () => {
       totalPages: documentData.totalPages || 0,
       currentPage: 1,
       pageTimes: {},
+      cacheKey: documentData.cacheKey || null, // 🆕 ADD cache key support
       uploadedAt: new Date().toISOString(),
       lastReadAt: new Date().toISOString()
     };
@@ -84,6 +85,15 @@ export const useDocuments = () => {
     ));
   };
 
+  // 🆕 ADD method to update cache key
+  const updateDocumentCacheKey = (documentId, cacheKey) => {
+    setDocuments(prev => prev.map(doc =>
+      doc.id === documentId
+        ? { ...doc, cacheKey, lastReadAt: new Date().toISOString() }
+        : doc
+    ));
+  };
+
   return {
     documents,
     addDocument,
@@ -92,6 +102,7 @@ export const useDocuments = () => {
     getDocumentById,
     getDocumentsByTopic,
     updateDocumentPageTimes,
-    updateDocumentProgress
+    updateDocumentProgress,
+    updateDocumentCacheKey // 🆕 ADD this
   };
 };
