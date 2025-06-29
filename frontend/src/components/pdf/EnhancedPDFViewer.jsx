@@ -1,37 +1,39 @@
-import React, { useState, useCallback, useEffect } from 'react';
+// components/pdf/EnhancedPDFViewer.jsx
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { ChevronLeft, ChevronRight, Upload, FileText, ZoomIn, ZoomOut, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Upload, FileText, ZoomIn, ZoomOut, Save, Play, Pause, AlertCircle } from 'lucide-react';
 import { useTimeTracking } from '../../hooks/useTimeTracking';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';
+import { pdfFileHandler, PDFErrorHandler } from '../../utils/pdfFileHandler';
 import ReadingTimer from '../timer/ReadingTimer';
 import TimeTrackingStats from '../timer/TimeTrackingStats';
 import ReadingEstimates from '../timer/ReadingEstimates';
 import ReadingSpeedIndicator from '../timer/ReadingSpeedIndicator';
-import TopicSelector from '../topics/TopicSelector';
 
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
-const EnhancedPDFViewer = ({ initialDocument = null, topicId = null, onBack = null }) => {
-  const [file, setFile] = useState(null);
+const EnhancedPDFViewer = ({ documentId, topicId, fileName, onBack }) => {
+  const [pdfData, setPdfData] = useState(null);
+  const [fileKey, setFileKey] = useState(null);
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [showTopicSelector, setShowTopicSelector] = useState(false);
-  const [selectedTopicId, setSelectedTopicId] = useState(topicId);
-  const [currentDocument, setCurrentDocument] = useState(initialDocument);
+  const [isPageChanging, setIsPageChanging] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
-  const {
-    topics,
-    addDocumentToTopic,
-    updateDocumentProgress,
-    updateDocumentPageTimes,
-    createTopic
-  } = useStudyPlanner();
+  const fileInputRef = useRef(null);
+  const maxRetries = 3;
 
-  // Time tracking
+  const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById } = useStudyPlanner();
+
+  // Get existing document data
+  const existingDocument = documentId ? getDocumentById(documentId) : null;
+  const initialPageTimes = existingDocument?.pageTimes || {};
+
+  // Time tracking with existing data
   const {
     isTracking,
     currentSessionTime,
@@ -41,445 +43,502 @@ const EnhancedPDFViewer = ({ initialDocument = null, topicId = null, onBack = nu
     stopPageTimer,
     resetTimingData,
     getPageTime
-  } = useTimeTracking();
+  } = useTimeTracking(initialPageTimes);
 
-  // Load initial document if provided
+  // Initialize page number from existing document
   useEffect(() => {
-    if (initialDocument && initialDocument.file) {
-      setFile(initialDocument.file);
-      setPageNumber(initialDocument.currentPage || 1);
-      setCurrentDocument(initialDocument);
-      setSelectedTopicId(initialDocument.topicId);
+    if (existingDocument && existingDocument.currentPage) {
+      setPageNumber(existingDocument.currentPage);
+      console.log(`📖 Loaded document at page ${existingDocument.currentPage}`);
     }
-  }, [initialDocument]);
+  }, [existingDocument]);
+
+  // Handle file upload and processing
+  const handleFileUpload = async (event) => {
+    const uploadedFile = event.target.files[0];
+    if (!uploadedFile) return;
+
+    console.log('🔄 Processing uploaded file:', uploadedFile.name);
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Process file using our enhanced handler
+      const cacheKey = await pdfFileHandler.processFile(uploadedFile);
+      
+      // Get the processed ArrayBuffer for react-pdf
+      const arrayBuffer = pdfFileHandler.getFileForPDF(cacheKey);
+      
+      if (!arrayBuffer) {
+        throw new Error('Failed to process file data');
+      }
+
+      setFileKey(cacheKey);
+      setPdfData(arrayBuffer);
+      setPageNumber(1);
+      setNumPages(null);
+      setRetryCount(0);
+      
+      console.log('✅ File ready for PDF viewer');
+      
+    } catch (error) {
+      console.error('❌ File upload error:', error);
+      setError(PDFErrorHandler.getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // PDF document load success
   const onDocumentLoadSuccess = useCallback(({ numPages }) => {
+    console.log(`📄 PDF loaded successfully with ${numPages} pages`);
     setNumPages(numPages);
     setLoading(false);
     setError(null);
-    console.log(`PDF loaded successfully with ${numPages} pages`);
+    setRetryCount(0);
     
-    // If this is a new document, save it
-    if (file && selectedTopicId && !currentDocument) {
-      const docData = addDocumentToTopic(selectedTopicId, file, numPages);
-      setCurrentDocument(docData);
-    } else if (currentDocument) {
-      // Update existing document with page count
-      updateDocumentProgress(currentDocument.id, pageNumber, numPages);
+    // Update document with page count
+    if (documentId) {
+      updateDocumentProgress(documentId, pageNumber, numPages);
     }
     
-    // Start timing for current page
-    if (file) {
-      startPageTimer(pageNumber, file.name);
-    }
-  }, [file, selectedTopicId, currentDocument, pageNumber, addDocumentToTopic, updateDocumentProgress, startPageTimer]);
+    // Start timing for current page after a brief delay
+    setTimeout(() => {
+      startPageTimer(pageNumber, fileName || 'uploaded-file.pdf');
+    }, 100);
+  }, [documentId, pageNumber, updateDocumentProgress, startPageTimer, fileName]);
 
-  // PDF document load error
+  // PDF document load error with retry logic
   const onDocumentLoadError = useCallback((error) => {
-    setError('Failed to load PDF. Please try again with a different file.');
-    setLoading(false);
-    stopPageTimer();
-    console.error('PDF load error:', error);
-  }, [stopPageTimer]);
-
-  // PDF page load error
-  const onPageLoadError = useCallback((error) => {
-    console.error('PDF page load error:', error);
-    setError('Failed to load this page. Try navigating to a different page.');
-  }, []);
-
-  const handleFileUpload = (event) => {
-    const uploadedFile = event.target.files[0];
-    if (uploadedFile && uploadedFile.type === 'application/pdf') {
-      // Stop current timing and reset
-      stopPageTimer();
-      resetTimingData();
+    console.error('📄 PDF load error:', error);
+    
+    const shouldRetry = PDFErrorHandler.shouldRetry(error) && retryCount < maxRetries;
+    
+    if (shouldRetry) {
+      console.log(`🔄 Retrying PDF load (attempt ${retryCount + 1}/${maxRetries})`);
+      setRetryCount(prev => prev + 1);
       
-      setFile(uploadedFile);
-      setLoading(true);
-      setError(null);
-      setPageNumber(1);
-      setNumPages(null);
-      setCurrentDocument(null);
-      setShowTopicSelector(true);
+      // Retry with fresh data
+      setTimeout(() => {
+        if (fileKey) {
+          const freshData = pdfFileHandler.getFileForPDF(fileKey);
+          setPdfData(freshData);
+        }
+      }, 1000 * (retryCount + 1)); // Exponential backoff
+      
     } else {
-      setError('Please select a valid PDF file.');
+      setError(PDFErrorHandler.getErrorMessage(error));
+      setLoading(false);
+      stopPageTimer();
     }
-  };
+  }, [stopPageTimer, retryCount, fileKey]);
 
-  const handleTopicSelect = (topicId) => {
-    setSelectedTopicId(topicId);
-    setShowTopicSelector(false);
-  };
-
-  const handleCreateNewTopic = () => {
-    // This would typically open a modal or form
-    const name = prompt('Enter topic name:');
-    if (name && name.trim()) {
-      const newTopic = createTopic({ name: name.trim(), color: 'blue' });
-      setSelectedTopicId(newTopic.id);
-      setShowTopicSelector(false);
+  // Handle page navigation with proper timer management
+  const navigateToPage = useCallback((newPage) => {
+    if (newPage === pageNumber || isPageChanging) return;
+    
+    console.log(`🔄 Navigating from page ${pageNumber} to page ${newPage}`);
+    setIsPageChanging(true);
+    
+    // Stop current timer and save time
+    stopPageTimer();
+    
+    // Update page number
+    setPageNumber(newPage);
+    
+    // Update document progress
+    if (documentId) {
+      updateDocumentProgress(documentId, newPage, numPages);
     }
-  };
+    
+    // Start timer for new page after a brief delay
+    setTimeout(() => {
+      startPageTimer(newPage, fileName || 'uploaded-file.pdf');
+      setIsPageChanging(false);
+    }, 100);
+  }, [pageNumber, isPageChanging, stopPageTimer, documentId, numPages, updateDocumentProgress, startPageTimer, fileName]);
 
-  const goToPrevPage = () => {
+  const goToPrevPage = useCallback(() => {
     const newPage = Math.max(pageNumber - 1, 1);
-    if (newPage !== pageNumber) {
-      setPageNumber(newPage);
-      if (currentDocument) {
-        updateDocumentProgress(currentDocument.id, newPage, numPages);
-      }
-      startPageTimer(newPage, file?.name);
-    }
-  };
+    navigateToPage(newPage);
+  }, [pageNumber, navigateToPage]);
 
-  const goToNextPage = () => {
+  const goToNextPage = useCallback(() => {
     const newPage = Math.min(pageNumber + 1, numPages || 1);
-    if (newPage !== pageNumber) {
-      setPageNumber(newPage);
-      if (currentDocument) {
-        updateDocumentProgress(currentDocument.id, newPage, numPages);
-      }
-      startPageTimer(newPage, file?.name);
-    }
-  };
+    navigateToPage(newPage);
+  }, [pageNumber, numPages, navigateToPage]);
 
-  const goToPage = (page) => {
+  const goToPage = useCallback((page) => {
     const pageNum = parseInt(page);
-    if (pageNum >= 1 && pageNum <= numPages && pageNum !== pageNumber) {
-      setPageNumber(pageNum);
-      if (currentDocument) {
-        updateDocumentProgress(currentDocument.id, pageNum, numPages);
-      }
-      startPageTimer(pageNum, file?.name);
+    if (pageNum >= 1 && pageNum <= numPages) {
+      navigateToPage(pageNum);
     }
-  };
+  }, [numPages, navigateToPage]);
 
-  const zoomIn = () => {
-    setScale(prev => Math.min(prev + 0.2, 3.0));
-  };
-
-  const zoomOut = () => {
-    setScale(prev => Math.max(prev - 0.2, 0.5));
-  };
+  const zoomIn = () => setScale(prev => Math.min(prev + 0.2, 3.0));
+  const zoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.5));
 
   // Save reading progress
   const saveProgress = useCallback(() => {
-    if (currentDocument && Object.keys(pageTimes).length > 0) {
-      updateDocumentPageTimes(currentDocument.id, pageTimes);
+    if (documentId && Object.keys(pageTimes).length > 0) {
+      updateDocumentPageTimes(documentId, pageTimes);
+      console.log(`💾 Progress saved for ${fileName}: ${Object.keys(pageTimes).length} pages`);
     }
-  }, [currentDocument, pageTimes, updateDocumentPageTimes]);
+  }, [documentId, pageTimes, updateDocumentPageTimes, fileName]);
 
-  // Handle page changes for timing
-  useEffect(() => {
-    if (file && numPages) {
-      startPageTimer(pageNumber, file.name);
+  // Manual timer control
+  const toggleTimer = () => {
+    if (isTracking) {
+      stopPageTimer();
+    } else {
+      startPageTimer(pageNumber, fileName || 'uploaded-file.pdf');
     }
-  }, [pageNumber, file, numPages, startPageTimer]);
+  };
+
+  // Retry loading PDF
+  const retryLoad = () => {
+    if (fileKey) {
+      setLoading(true);
+      setError(null);
+      setRetryCount(0);
+      
+      // Get fresh data from cache
+      const freshData = pdfFileHandler.getFileForPDF(fileKey);
+      setPdfData(freshData);
+    }
+  };
 
   // Auto-save progress periodically
   useEffect(() => {
-    const interval = setInterval(saveProgress, 30000); // Save every 30 seconds
+    const interval = setInterval(() => {
+      if (Object.keys(pageTimes).length > 0) {
+        saveProgress();
+      }
+    }, 30000); // Save every 30 seconds
     return () => clearInterval(interval);
-  }, [saveProgress]);
-
-  // Stop timer when component unmounts or file changes
-  useEffect(() => {
-    return () => {
-      stopPageTimer();
-      saveProgress();
-    };
-  }, [stopPageTimer, saveProgress]);
+  }, [saveProgress, pageTimes]);
 
   // Handle browser tab visibility for accurate timing
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        console.log('👁️ Tab hidden - stopping timer');
         stopPageTimer();
         saveProgress();
-      } else if (file && numPages) {
-        startPageTimer(pageNumber, file.name);
+      } else if (pdfData && numPages && !isPageChanging) {
+        console.log('👁️ Tab visible - starting timer');
+        startPageTimer(pageNumber, fileName || 'uploaded-file.pdf');
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [pdfData, numPages, pageNumber, startPageTimer, stopPageTimer, saveProgress, fileName, isPageChanging]);
+
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      console.log('🧹 PDF Viewer cleanup');
+      stopPageTimer();
+      saveProgress();
     };
-  }, [file, numPages, pageNumber, startPageTimer, stopPageTimer, saveProgress]);
+  }, [stopPageTimer, saveProgress]);
+
+  // Show upload interface if no PDF loaded
+  if (!pdfData) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold text-gray-900">PDF Study Viewer</h1>
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="flex items-center space-x-1 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                ← Back
+              </button>
+            )}
+          </div>
+
+          <div className="bg-white border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
+            <FileText className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold text-gray-600 mb-2">No PDF loaded</h2>
+            <p className="text-gray-500 mb-6">Upload a PDF file to start reading and tracking your study time.</p>
+            
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Upload className="h-5 w-5 mr-2" />
+              {loading ? 'Processing...' : 'Upload PDF'}
+            </button>
+
+            {loading && (
+              <div className="mt-4 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                <span className="ml-2 text-gray-600">Processing PDF file...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex gap-6">
           {/* Main PDF Area */}
           <div className="flex-1">
-            {!file && (
-              <div className="text-center py-12">
-                <FileText className="h-24 w-24 text-gray-300 mx-auto mb-4" />
-                <h2 className="text-xl font-semibold text-gray-600 mb-2">No PDF loaded</h2>
-                <p className="text-gray-500 mb-4">Upload a PDF file to start reading and tracking your study time.</p>
-                <div className="mt-6 text-sm text-gray-400 space-y-1">
-                  <p>✅ Real PDF Rendering</p>
-                  <p>✅ Page Navigation & Zoom</p>
-                  <p>✅ Reading Time Tracking</p>
-                  <p>✅ Reading Speed & Estimates</p>
-                  <p>🎯 ✅ Topic Organization</p>
-                </div>
-                
-                {/* File Upload */}
-                <div className="mt-8">
-                  <div className="relative inline-block">
-                    <input
-                      type="file"
-                      accept=".pdf"
-                      onChange={handleFileUpload}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                      id="pdf-upload"
-                    />
-                    <label
-                      htmlFor="pdf-upload"
-                      className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer transition-colors"
-                    >
-                      <Upload className="h-5 w-5 mr-2" />
-                      Upload PDF
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Topic Selection Modal */}
-            {showTopicSelector && (
-              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-                  <h3 className="text-lg font-semibold mb-4">Select Topic for PDF</h3>
-                  <TopicSelector
-                    topics={topics}
-                    selectedTopicId={selectedTopicId}
-                    onSelectTopic={handleTopicSelect}
-                    onCreateNew={handleCreateNewTopic}
-                  />
-                  <div className="mt-4 flex justify-end space-x-2">
-                    <button
-                      onClick={() => setShowTopicSelector(false)}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
+            {/* Error Display */}
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                <p className="text-red-800">{error}</p>
-                <p className="text-red-600 text-sm mt-1">
-                  Make sure the PDF file is not corrupted and is a standard PDF format.
+                <div className="flex items-start space-x-3">
+                  <AlertCircle className="h-5 w-5 text-red-500 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-red-800 font-medium">{error}</p>
+                    <div className="mt-3 flex space-x-3">
+                      <button
+                        onClick={retryLoad}
+                        className="text-sm bg-red-100 text-red-700 px-3 py-1 rounded hover:bg-red-200 transition-colors"
+                      >
+                        Try Again
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 transition-colors"
+                      >
+                        Upload Different File
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Loading State */}
+            {loading && (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="text-gray-600 mt-2">
+                  {retryCount > 0 ? `Retrying... (${retryCount}/${maxRetries})` : 'Loading PDF...'}
                 </p>
               </div>
             )}
 
-            {loading && (
-              <div className="text-center py-12">
-                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                <p className="text-gray-600 mt-2">Loading PDF...</p>
-              </div>
-            )}
-
-            {file && selectedTopicId && (
-              <div className="bg-white rounded-lg shadow-sm">
-                {/* Toolbar */}
-                <div className="border-b px-6 py-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center space-x-4">
-                      {/* Navigation Controls */}
+            {/* PDF Viewer */}
+            <div className="bg-white rounded-lg shadow-sm">
+              {/* Toolbar */}
+              <div className="border-b px-6 py-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-4">
+                    {/* Navigation Controls */}
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={goToPrevPage}
+                        disabled={pageNumber <= 1 || isPageChanging}
+                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Previous page"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      
                       <div className="flex items-center space-x-2">
-                        <button
-                          onClick={goToPrevPage}
-                          disabled={pageNumber <= 1}
-                          className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          title="Previous page"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="number"
-                            min="1"
-                            max={numPages || 1}
-                            value={pageNumber}
-                            onChange={(e) => goToPage(e.target.value)}
-                            className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            title="Go to page"
-                          />
-                          <span className="text-gray-600">of {numPages || '?'}</span>
-                        </div>
-                        
-                        <button
-                          onClick={goToNextPage}
-                          disabled={pageNumber >= (numPages || 1)}
-                          className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          title="Next page"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          max={numPages || 1}
+                          value={pageNumber}
+                          onChange={(e) => goToPage(e.target.value)}
+                          disabled={isPageChanging}
+                          className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                          title="Go to page"
+                        />
+                        <span className="text-gray-600">of {numPages || '?'}</span>
+                        {isPageChanging && (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                        )}
                       </div>
+                      
+                      <button
+                        onClick={goToNextPage}
+                        disabled={pageNumber >= (numPages || 1) || isPageChanging}
+                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Next page"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
 
-                      {/* Zoom Controls */}
-                      <div className="flex items-center space-x-2 border-l pl-4">
-                        <button
-                          onClick={zoomOut}
-                          disabled={scale <= 0.5}
-                          className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          title="Zoom out"
-                        >
-                          <ZoomOut className="h-4 w-4" />
-                        </button>
-                        
-                        <span className="text-sm text-gray-600 min-w-12 text-center">
-                          {Math.round(scale * 100)}%
+                    {/* Timer Control */}
+                    <div className="flex items-center space-x-2 border-l pl-4">
+                      <button
+                        onClick={toggleTimer}
+                        className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-sm ${
+                          isTracking 
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        title={isTracking ? "Stop timer" : "Start timer"}
+                      >
+                        {isTracking ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                        <span>Timer</span>
+                      </button>
+                    </div>
+
+                    {/* Zoom Controls */}
+                    <div className="flex items-center space-x-2 border-l pl-4">
+                      <button
+                        onClick={zoomOut}
+                        disabled={scale <= 0.5}
+                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Zoom out"
+                      >
+                        <ZoomOut className="h-4 w-4" />
+                      </button>
+                      
+                      <span className="text-sm text-gray-600 min-w-12 text-center">
+                        {Math.round(scale * 100)}%
+                      </span>
+                      
+                      <button
+                        onClick={zoomIn}
+                        disabled={scale >= 3.0}
+                        className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Zoom in"
+                      >
+                        <ZoomIn className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Page Time Display */}
+                    {getPageTime(pageNumber) > 0 && (
+                      <div className="border-l pl-4">
+                        <span className="text-sm text-gray-600">
+                          This page: {Math.floor(getPageTime(pageNumber) / 60)}m {getPageTime(pageNumber) % 60}s
                         </span>
-                        
-                        <button
-                          onClick={zoomIn}
-                          disabled={scale >= 3.0}
-                          className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          title="Zoom in"
-                        >
-                          <ZoomIn className="h-4 w-4" />
-                        </button>
                       </div>
+                    )}
+                  </div>
 
-                      {/* Page Time Display */}
-                      {getPageTime(pageNumber) > 0 && (
-                        <div className="border-l pl-4">
-                          <span className="text-sm text-gray-600">
-                            This page: {Math.floor(getPageTime(pageNumber) / 60)}m {getPageTime(pageNumber) % 60}s
-                          </span>
-                        </div>
+                  {/* File Actions */}
+                  <div className="flex items-center space-x-4">
+                    <button
+                      onClick={saveProgress}
+                      className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                      title="Save progress"
+                    >
+                      <Save className="h-4 w-4" />
+                      <span>Save</span>
+                    </button>
+                    
+                    <div className="text-sm text-gray-600">
+                      <span className="font-medium">{fileName || 'Uploaded PDF'}</span>
+                      {fileKey && (
+                        <span className="ml-2">
+                          ({(pdfFileHandler.getFileMetadata(fileKey)?.size / 1024 / 1024).toFixed(1)} MB)
+                        </span>
                       )}
                     </div>
 
-                    {/* Save and File Info */}
-                    <div className="flex items-center space-x-4">
+                    {onBack && (
                       <button
-                        onClick={saveProgress}
-                        className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
-                        title="Save progress"
+                        onClick={onBack}
+                        className="flex items-center space-x-1 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
                       >
-                        <Save className="h-4 w-4" />
-                        <span>Save</span>
+                        ← Back
                       </button>
-                      
-                      <div className="text-sm text-gray-600">
-                        <span className="font-medium">{file.name}</span>
-                        <span className="ml-2">({(file.size / 1024 / 1024).toFixed(1)} MB)</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Reading Speed Indicator */}
-                  <ReadingSpeedIndicator 
-                    pageTimes={pageTimes}
-                    totalPages={numPages || 0}
-                    currentPage={pageNumber}
-                  />
-                </div>
-
-                {/* PDF Display Area */}
-                <div className="p-6">
-                  <div className="bg-gray-100 rounded-lg min-h-96 flex items-center justify-center overflow-auto">
-                    <Document
-                      file={file}
-                      onLoadSuccess={onDocumentLoadSuccess}
-                      onLoadError={onDocumentLoadError}
-                      loading={
-                        <div className="text-center py-12">
-                          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                          <p className="text-gray-600 mt-2">Loading PDF document...</p>
-                        </div>
-                      }
-                      error={
-                        <div className="text-center py-12">
-                          <div className="text-red-600 mb-2">❌ Failed to load PDF</div>
-                          <p className="text-gray-600 text-sm">Please try a different PDF file</p>
-                        </div>
-                      }
-                      className="react-pdf__Document"
-                    >
-                      <Page
-                        pageNumber={pageNumber}
-                        scale={scale}
-                        onLoadError={onPageLoadError}
-                        loading={
-                          <div className="bg-white shadow-lg rounded border p-8 animate-pulse">
-                            <div className="h-96 bg-gray-200 rounded"></div>
-                          </div>
-                        }
-                        className="react-pdf__Page shadow-lg rounded"
-                        canvasBackground="white"
-                      />
-                    </Document>
+                    )}
                   </div>
                 </div>
 
-                {/* Progress Bar */}
-                {numPages && (
-                  <div className="border-t px-6 py-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-gray-600">Reading Progress</span>
-                      <span className="text-sm font-medium text-gray-800">
-                        {Math.round((pageNumber / numPages) * 100)}% Complete
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${(pageNumber / numPages) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-500 mt-1">
-                      <span>Page 1</span>
-                      <span>Page {numPages}</span>
-                    </div>
+                {/* Reading Speed Indicator */}
+                <ReadingSpeedIndicator 
+                  pageTimes={pageTimes}
+                  totalPages={numPages || 0}
+                  currentPage={pageNumber}
+                />
+
+                {/* Debug Info (Development Only) */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="mt-2 text-xs text-gray-500 font-mono bg-gray-50 p-2 rounded">
+                    Timer: {isTracking ? 'ON' : 'OFF'} | 
+                    Current: {currentSessionTime}s | 
+                    Page: {pageNumber} | 
+                    Total pages tracked: {Object.keys(pageTimes).length} |
+                    Changing: {isPageChanging ? 'YES' : 'NO'} |
+                    Retries: {retryCount}
                   </div>
                 )}
               </div>
-            )}
-          </div>
 
-          {/* Sidebar with Timer and Stats */}
-          <div className="w-80 space-y-4">
-            <ReadingTimer
-              isTracking={isTracking}
-              currentSessionTime={currentSessionTime}
-              sessionData={sessionData}
-              onReset={resetTimingData}
-              currentPage={pageNumber}
-            />
-            
-            <ReadingEstimates
-              pageTimes={pageTimes}
-              currentPage={pageNumber}
-              totalPages={numPages || 0}
-              sessionData={sessionData}
-            />
-            
-            <TimeTrackingStats
-              pageTimes={pageTimes}
-              sessionData={sessionData}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+              {/* PDF Display Area */}
+              <div className="p-6">
+                <div className="bg-gray-100 rounded-lg min-h-96 flex items-center justify-center overflow-auto">
+                  <Document
+                    file={pdfData}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    onLoadError={onDocumentLoadError}
+                    options={{
+                      disableTextLayer: true,
+                      disableAnnotationLayer: true,
+                      // Add additional options for better reliability
+                      cMapUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+                      cMapPacked: true,
+                    }}
+                    loading={
+                      <div className="text-center py-12">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        <p className="text-gray-600 mt-2">Loading PDF document...</p>
+                      </div>
+                    }
+                    error={
+                      <div className="text-center py-12">
+                        <div className="text-red-600 mb-2">❌ Failed to load PDF</div>
+                        <p className="text-gray-600 text-sm">Please try refreshing or uploading a different file</p>
+                        <button
+                          onClick={retryLoad}
+                          className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    }
+                    className="react-pdf__Document"
+                  >
+                    <Page
+                      pageNumber={pageNumber}
+                      scale={scale}
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
+                      loading={
+                        <div className="bg-white shadow-lg rounded border p-8 animate-pulse">
+                          <div className="h-96 bg-gray-200 rounded"></div>
+                        </div>
+                      }
+                      className="react-pdf__Page shadow-lg rounded"
+                      canvasBackground="white"
+                    />
+                  </Document>
+                </div>
+              </div>
 
-export default EnhancedPDFViewer;
+              {/* Progress Bar */}
+              {numPages && (
+                <div className="border-t px-6 py-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-gray-600">Reading Progress</span>
+                    <span className="text-sm font-medium text-gray-800">
+                      {Math.round((pageNumber / numPages) * 100)}% Complete
+                    </span>
