@@ -62,42 +62,50 @@ export const useStudyGoals = () => {
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
     let current = 0;
-    let target = goal.target;
+    const target = goal.target;
 
+    // Use block scope for each case
     switch (goal.type) {
-      case 'daily_time':
-        current = documents.reduce((sum, doc) => {
-          const todayTimes = Object.entries(doc.pageTimes || {}).filter(([page, time]) => {
+      case 'daily_time': {
+        const todayTimes = documents.reduce((sum, doc) => {
+          const dayTimes = Object.entries(doc.pageTimes || {}).filter(() => {
             return new Date(doc.lastReadAt) >= startOfDay;
           });
-          return sum + todayTimes.reduce((pageSum, [, time]) => pageSum + time, 0);
-        }, 0) / 60;
+          return sum + dayTimes.reduce((pageSum, [, time]) => pageSum + time, 0);
+        }, 0);
+        current = todayTimes / 60;
         break;
+      }
 
-      case 'weekly_time':
+      case 'weekly_time': {
         const startOfWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay());
-        current = documents.reduce((sum, doc) => {
-          const weekTimes = Object.entries(doc.pageTimes || {}).filter(([page, time]) => {
+        const weekTimes = documents.reduce((sum, doc) => {
+          const weekTimesForDoc = Object.entries(doc.pageTimes || {}).filter(() => {
             return new Date(doc.lastReadAt) >= startOfWeek;
           });
-          return sum + weekTimes.reduce((pageSum, [, time]) => pageSum + time, 0);
-        }, 0) / 60;
+          return sum + weekTimesForDoc.reduce((pageSum, [, time]) => pageSum + time, 0);
+        }, 0);
+        current = weekTimes / 60;
         break;
+      }
 
-      case 'pages_per_day':
-        current = documents.reduce((sum, doc) => {
+      case 'pages_per_day': {
+        const todayPages = documents.reduce((sum, doc) => {
           if (new Date(doc.lastReadAt) >= startOfDay) {
             return sum + Object.keys(doc.pageTimes || {}).length;
           }
           return sum;
         }, 0);
+        current = todayPages;
         break;
+      }
 
-      case 'reading_speed':
+      case 'reading_speed': {
         const allPageTimes = documents.reduce((acc, doc) => ({ ...acc, ...doc.pageTimes }), {});
         const totalTime = Object.values(allPageTimes).reduce((sum, time) => sum + time, 0);
         current = totalTime > 0 ? (Object.keys(allPageTimes).length * 3600) / totalTime : 0;
         break;
+      }
 
       default:
         current = 0;

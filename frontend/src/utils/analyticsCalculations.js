@@ -19,7 +19,11 @@ export const getStudyStreak = (documents) => {
   let streak = 0;
   let currentDate = new Date(today);
   
-  while (true) {
+  // Use a counter to prevent infinite loops
+  let maxIterations = 365; // Reasonable limit
+  let iterations = 0;
+  
+  while (iterations < maxIterations) {
     const dateString = currentDate.toDateString();
     if (studyDates.has(dateString)) {
       streak++;
@@ -29,6 +33,7 @@ export const getStudyStreak = (documents) => {
     } else {
       break;
     }
+    iterations++;
   }
   
   return streak;

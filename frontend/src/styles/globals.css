@@ -12,18 +12,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
-
-/* PDF viewer specific styles */
-.pdf-page-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
 /* React-PDF Styles */
 .react-pdf__Document {
   display: flex;
@@ -33,7 +21,7 @@ code {
 
 .react-pdf__Page {
   margin: 1rem 0;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   border-radius: 0.5rem;
   overflow: hidden;
 }
@@ -41,19 +29,19 @@ code {
 .react-pdf__Page__canvas {
   display: block;
   border-radius: 0.5rem;
+  max-width: 100%;
+  height: auto;
 }
 
-.react-pdf__Page__textContent {
-  border-radius: 0.5rem;
+/* Loading spinner */
+.loading-spinner {
+  border: 2px solid #f3f4f6;
+  border-top: 2px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 
-.react-pdf__Page__annotations {
-  border-radius: 0.5rem;
-}
-
-/* Loading and error states */
-.react-pdf__message {
-  padding: 20px;
-  color: #666;
-  text-align: center;
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
