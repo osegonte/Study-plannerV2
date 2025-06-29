@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { StudyPlannerProvider } from './contexts/StudyPlannerContext';
 import UserOnboarding from './components/auth/UserOnboarding';
@@ -9,6 +9,11 @@ import EnhancedAnalyticsDashboard from './components/analytics/EnhancedAnalytics
 import StudyGoals from './components/goals/StudyGoals';
 import StudyReports from './components/reports/StudyReports';
 import StudyInsights from './components/insights/StudyInsights';
+
+// Phase 1 New Imports - Folder Management
+import ExamDateManager from './components/exams/ExamDateManager';
+import FolderManager from './components/folders/FolderManager';
+
 import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import { 
   FileText, 
@@ -20,11 +25,13 @@ import {
   FileBarChart, 
   Lightbulb,
   Home,
-  Clock,
+  Calendar,
+  HardDrive, // For Folder Manager
   TrendingUp,
   User,
   LogOut,
-  AlertCircle
+  AlertCircle,
+  Save
 } from 'lucide-react';
 import { 
   calculateTopicEstimates, 
@@ -121,9 +128,19 @@ const AppContent = () => {
     setUploadError(null);
   };
 
-  const overallProgress = calculateOverallProgress(topics, documents);
-
+  // Phase 1: Enhanced dashboard with exam countdown
   const renderDashboard = () => {
+    const upcomingExams = topics
+      .filter(topic => topic.examDate)
+      .map(topic => {
+        const examDate = new Date(topic.examDate.examDate);
+        const daysUntil = Math.ceil((examDate - new Date()) / (1000 * 60 * 60 * 24));
+        return { ...topic, daysUntil, examDate };
+      })
+      .sort((a, b) => a.daysUntil - b.daysUntil);
+
+    const urgentExams = upcomingExams.filter(exam => exam.daysUntil <= 7 && exam.daysUntil >= 0);
+
     return (
       <div className="space-y-8">
         {uploadError && (
@@ -144,38 +161,45 @@ const AppContent = () => {
           </div>
         )}
 
-        {documents.length > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex items-center space-x-2">
-              <AlertCircle className="h-5 w-5 text-yellow-600" />
-              <div>
-                <h3 className="text-yellow-800 font-medium">Session-Based Storage</h3>
-                <p className="text-yellow-700 text-sm">
-                  PDF files are only available during your current session. You'll need to re-upload files after refreshing the page.
-                </p>
-              </div>
+        {/* Urgent Exam Alerts */}
+        {urgentExams.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center space-x-2 mb-2">
+              <AlertCircle className="h-5 w-5 text-red-600" />
+              <h3 className="font-semibold text-red-800">🚨 Urgent: Exams This Week!</h3>
+            </div>
+            <div className="space-y-2">
+              {urgentExams.map(exam => (
+                <div key={exam.id} className="text-sm text-red-700">
+                  <strong>{exam.name}</strong> - {exam.daysUntil === 0 ? 'Today!' : `${exam.daysUntil} days left`}
+                </div>
+              ))}
             </div>
           </div>
         )}
 
+        {/* Welcome Header */}
         <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg p-6">
           <h2 className="text-2xl font-bold mb-2">
             Welcome back, {userProfile?.displayName || currentUser?.username}! 📚
           </h2>
           <p className="text-blue-100">
-            {userProfile?.school && `${userProfile.school} • `}
-            Ready to study?
+            {upcomingExams.length > 0 
+              ? `${upcomingExams.length} upcoming exams • Next: ${upcomingExams[0]?.name} in ${upcomingExams[0]?.daysUntil} days`
+              : 'Ready to study? Set some exam dates to get personalized schedules!'
+            }
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Quick Actions */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <button
             onClick={() => setCurrentView('upload')}
             className="p-6 bg-white border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors text-center"
           >
             <Upload className="h-12 w-12 text-blue-600 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload New PDFs</h3>
-            <p className="text-gray-600">Add textbooks, notes, and study materials</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload PDFs</h3>
+            <p className="text-gray-600">Add study materials</p>
           </button>
 
           <button
@@ -184,19 +208,29 @@ const AppContent = () => {
           >
             <FolderPlus className="h-12 w-12 text-green-600 mx-auto mb-3" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Manage Topics</h3>
-            <p className="text-gray-600">Organize courses and subjects</p>
+            <p className="text-gray-600">Organize subjects</p>
           </button>
 
           <button
-            onClick={() => setCurrentView('analytics')}
+            onClick={() => setCurrentView('exams')}
             className="p-6 bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow text-center"
           >
-            <BarChart3 className="h-12 w-12 text-purple-600 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">View Analytics</h3>
-            <p className="text-gray-600">Track reading progress and goals</p>
+            <Calendar className="h-12 w-12 text-red-600 mx-auto mb-3" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Exam Dates</h3>
+            <p className="text-gray-600">Set exam schedules</p>
+          </button>
+
+          <button
+            onClick={() => setCurrentView('folders')}
+            className="p-6 bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow text-center"
+          >
+            <HardDrive className="h-12 w-12 text-purple-600 mx-auto mb-3" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Folders</h3>
+            <p className="text-gray-600">Organize files</p>
           </button>
         </div>
 
+        {/* Recent Documents & Topics */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white border rounded-lg p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Documents</h3>
@@ -258,9 +292,9 @@ const AppContent = () => {
             ) : (
               <div className="space-y-3">
                 {topics.slice(0, 4).map((topic) => {
-                  const topicDocuments = getTopicDocuments(topic.id);
-                  const estimates = calculateTopicEstimates(topicDocuments);
-
+                  const topicDocuments = documents.filter(doc => doc.topicId === topic.id);
+                  const hasFolder = !!topic.folderPath;
+                  
                   return (
                     <div
                       key={topic.id}
@@ -268,11 +302,15 @@ const AppContent = () => {
                       onClick={() => setCurrentView('topics')}
                     >
                       <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-medium">{topic.name}</h4>
-                          <p className="text-sm opacity-75">
-                            {estimates.totalDocuments} documents • {Math.round(estimates.averageProgress)}% progress
-                          </p>
+                        <div className="flex items-center space-x-2">
+                          <FolderPlus className="h-4 w-4" />
+                          <div>
+                            <h4 className="font-medium">{topic.name}</h4>
+                            <p className="text-sm opacity-75">
+                              {topicDocuments.length} documents
+                              {hasFolder ? ' • 📁 Folder planned' : ' • ⏳ Folder pending'}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -286,10 +324,13 @@ const AppContent = () => {
     );
   };
 
+  // Updated navigation items with new Phase 1 features
   const navigationItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'upload', label: 'Upload PDFs', icon: Upload },
     { id: 'topics', label: 'Topics', icon: FolderPlus },
+    { id: 'exams', label: 'Exam Dates', icon: Calendar },
+    { id: 'folders', label: 'Folder Manager', icon: HardDrive },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'reports', label: 'Reports', icon: FileBarChart },
@@ -308,6 +349,9 @@ const AppContent = () => {
             <div className="flex items-center space-x-3">
               <FileText className="h-8 w-8 text-blue-600" />
               <h1 className="text-2xl font-bold text-gray-900">PDF Study Planner</h1>
+              <span className="text-sm bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                Phase 1 ✨
+              </span>
             </div>
             
             <div className="flex items-center space-x-4">
@@ -401,6 +445,8 @@ const AppContent = () => {
             onDeleteTopic={deleteTopic}
           />
         )}
+        {currentView === 'exams' && <ExamDateManager />}
+        {currentView === 'folders' && <FolderManager />}
         {currentView === 'analytics' && <EnhancedAnalyticsDashboard />}
         {currentView === 'goals' && <StudyGoals />}
         {currentView === 'reports' && <StudyReports />}

@@ -23,7 +23,6 @@ export const StudyPlannerProvider = ({ children }) => {
     updateTopic: topicsHook.updateTopic,
     deleteTopic: topicsHook.deleteTopic,
     getTopicById: topicsHook.getTopicById,
-    isCreatingFolder: topicsHook.isCreatingFolder, // New from enhanced hook
 
     // Documents
     documents: documentsHook.documents,
@@ -34,7 +33,6 @@ export const StudyPlannerProvider = ({ children }) => {
     getDocumentsByTopic: documentsHook.getDocumentsByTopic,
     updateDocumentPageTimes: documentsHook.updateDocumentPageTimes,
     updateDocumentProgress: documentsHook.updateDocumentProgress,
-    updateDocumentCacheKey: documentsHook.updateDocumentCacheKey,
 
     // Helper methods
     addDocumentToTopic: (topicId, fileData, totalPages = 0) => {

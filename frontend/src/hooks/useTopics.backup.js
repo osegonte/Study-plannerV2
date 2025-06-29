@@ -55,8 +55,6 @@ export const useTopics = () => {
 
         if (window.showNotification) {
           window.showNotification(`✅ Topic "${newTopic.name}" created! Folder planned for creation.`, 'success');
-        } else {
-          console.log(`✅ Topic "${newTopic.name}" created! Folder planned for creation.`);
         }
         
       } catch (folderError) {
@@ -97,38 +95,12 @@ export const useTopics = () => {
     return topics.find(topic => topic.id === topicId);
   };
 
-  const addDocumentToTopic = (topicId, documentData) => {
-    setTopics(prev => prev.map(topic =>
-      topic.id === topicId
-        ? { 
-            ...topic, 
-            documents: [...(topic.documents || []), documentData],
-            updatedAt: new Date().toISOString()
-          }
-        : topic
-    ));
-  };
-
-  const removeDocumentFromTopic = (topicId, documentId) => {
-    setTopics(prev => prev.map(topic =>
-      topic.id === topicId
-        ? { 
-            ...topic, 
-            documents: (topic.documents || []).filter(doc => doc.id !== documentId),
-            updatedAt: new Date().toISOString()
-          }
-        : topic
-    ));
-  };
-
   return {
     topics,
     isCreatingFolder,
     createTopic,
     updateTopic,
     deleteTopic,
-    getTopicById,
-    addDocumentToTopic,
-    removeDocumentFromTopic
+    getTopicById
   };
 };
