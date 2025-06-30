@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save, Play, Pause, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save, Play, Pause, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useTimeTracking } from '../../hooks/useTimeTracking';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';
 import ReadingTimer from '../timer/ReadingTimer';
@@ -8,8 +8,26 @@ import TimeTrackingStats from '../timer/TimeTrackingStats';
 import ReadingEstimates from '../timer/ReadingEstimates';
 import ReadingSpeedIndicator from '../timer/ReadingSpeedIndicator';
 
-// Verify worker is set correctly
-console.log('📄 PDFViewer - Current worker:', pdfjs.GlobalWorkerOptions.workerSrc);
+// Enhanced worker configuration with fallback
+const configureWorker = () => {
+  const workerUrls = [
+    '/pdf.worker.min.js',
+    `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`,
+    `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
+  ];
+  
+  for (const url of workerUrls) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = url;
+      console.log('🔧 PDF Worker configured:', url);
+      break;
+    } catch (error) {
+      console.warn('⚠️ Worker URL failed:', url, error);
+    }
+  }
+};
+
+configureWorker();
 
 const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const [pdfData, setPdfData] = useState(null);
@@ -20,6 +38,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const [error, setError] = useState(null);
   const [isPageChanging, setIsPageChanging] = useState(false);
   const [processingMethod, setProcessingMethod] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
 
   const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById } = useStudyPlanner();
 
@@ -39,169 +58,212 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     getPageTime
   } = useTimeTracking(initialPageTimes);
 
-  // EMERGENCY FIX: Direct file processing with multiple strategies
-  useEffect(() => {
-    const processFileEmergency = async () => {
-      if (!file) {
-        console.log('❌ No file provided');
-        return;
-      }
-
-      console.log('🚨 EMERGENCY: Starting file processing for:', file.name, file.size, 'bytes');
-      setLoading(true);
-      setError(null);
-
-      try {
-        // Strategy 1: Direct ArrayBuffer
-        console.log('📄 Strategy 1: Direct ArrayBuffer conversion...');
-        setProcessingMethod('Direct ArrayBuffer');
-        
-        const arrayBuffer = await file.arrayBuffer();
-        console.log('✅ ArrayBuffer created:', arrayBuffer.byteLength, 'bytes');
-        
-        if (arrayBuffer.byteLength === 0) {
-          throw new Error('ArrayBuffer is empty');
-        }
-        
-        setPdfData(arrayBuffer);
-        setLoading(false);
-        console.log('✅ File ready via ArrayBuffer');
-        return;
-
-      } catch (arrayBufferError) {
-        console.warn('⚠️ ArrayBuffer failed:', arrayBufferError.message);
-        
-        try {
-          // Strategy 2: FileReader
-          console.log('📄 Strategy 2: FileReader...');
-          setProcessingMethod('FileReader');
-          
+  // Enhanced ArrayBuffer creation with multiple strategies
+  const createStableArrayBuffer = useCallback(async (file) => {
+    const strategies = [
+      // Strategy 1: FileReader with ArrayBuffer
+      async () => {
+        return new Promise((resolve, reject) => {
           const reader = new FileReader();
-          
-          reader.onload = (event) => {
+          reader.onload = (e) => {
             try {
-              const result = event.target.result;
-              console.log('✅ FileReader result:', typeof result, result.byteLength || result.length);
-              
-              if (result instanceof ArrayBuffer) {
-                setPdfData(result);
-              } else {
-                // Convert to ArrayBuffer if needed
-                const buffer = new ArrayBuffer(result.length);
-                const view = new Uint8Array(buffer);
-                for (let i = 0; i < result.length; i++) {
-                  view[i] = result.charCodeAt(i);
-                }
-                setPdfData(buffer);
+              const buffer = e.target.result;
+              if (!(buffer instanceof ArrayBuffer)) {
+                throw new Error('Not an ArrayBuffer');
               }
-              
-              setLoading(false);
-              console.log('✅ File ready via FileReader');
-            } catch (readerProcessError) {
-              console.error('❌ FileReader processing failed:', readerProcessError);
-              setError(`FileReader processing failed: ${readerProcessError.message}`);
-              setLoading(false);
+              // Create stable copy immediately
+              const stable = buffer.slice();
+              resolve(stable);
+            } catch (err) {
+              reject(err);
             }
           };
-          
-          reader.onerror = (error) => {
-            console.error('❌ FileReader error:', error);
-            setError('FileReader failed to read file');
-            setLoading(false);
-          };
-          
+          reader.onerror = () => reject(new Error('FileReader failed'));
           reader.readAsArrayBuffer(file);
-          
-        } catch (fileReaderError) {
-          console.error('❌ FileReader setup failed:', fileReaderError);
-          
-          try {
-            // Strategy 3: URL object (last resort)
-            console.log('📄 Strategy 3: URL.createObjectURL...');
-            setProcessingMethod('URL Object');
-            
-            const fileUrl = URL.createObjectURL(file);
-            console.log('✅ File URL created:', fileUrl);
-            
-            setPdfData(fileUrl);
-            setLoading(false);
-            console.log('✅ File ready via URL');
-            
-          } catch (urlError) {
-            console.error('❌ All file processing strategies failed:', urlError);
-            setError(`All file processing failed. ArrayBuffer: ${arrayBufferError.message}, FileReader: ${fileReaderError.message}, URL: ${urlError.message}`);
-            setLoading(false);
-          }
+        });
+      },
+      
+      // Strategy 2: Direct arrayBuffer() with immediate copy
+      async () => {
+        const buffer = await file.arrayBuffer();
+        return buffer.slice(); // Create immediate copy
+      },
+      
+      // Strategy 3: Fetch blob URL
+      async () => {
+        const url = URL.createObjectURL(file);
+        try {
+          const response = await fetch(url);
+          const buffer = await response.arrayBuffer();
+          return buffer.slice();
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      },
+      
+      // Strategy 4: Uint8Array conversion
+      async () => {
+        const buffer = await file.arrayBuffer();
+        const uint8 = new Uint8Array(buffer);
+        const copy = new Uint8Array(uint8.length);
+        copy.set(uint8);
+        return copy.buffer;
+      }
+    ];
+
+    for (let i = 0; i < strategies.length; i++) {
+      try {
+        const result = await strategies[i]();
+        if (result && result.byteLength > 0) {
+          console.log(`✅ Strategy ${i + 1} succeeded`);
+          return result;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Strategy ${i + 1} failed:`, error.message);
+        if (i === strategies.length - 1) {
+          throw new Error(`All buffer creation strategies failed. Last error: ${error.message}`);
         }
       }
-    };
+    }
+  }, []);
 
-    processFileEmergency();
-  }, [file]);
+  // Enhanced file processing with retry logic
+  const processFile = useCallback(async (inputFile) => {
+    if (!inputFile || !(inputFile instanceof File)) {
+      throw new Error('Invalid file object');
+    }
+
+    if (inputFile.type !== 'application/pdf') {
+      throw new Error('Only PDF files are supported');
+    }
+
+    if (inputFile.size > 100 * 1024 * 1024) {
+      throw new Error('File size must be less than 100MB');
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const maxRetries = 3;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        setProcessingMethod(`Attempt ${attempt}/${maxRetries}`);
+        console.log(`📄 Processing attempt ${attempt}:`, inputFile.name);
+
+        const stableBuffer = await createStableArrayBuffer(inputFile);
+        
+        // Verify the buffer
+        if (!stableBuffer || stableBuffer.byteLength === 0) {
+          throw new Error('Created buffer is empty');
+        }
+
+        // Test PDF header
+        const headerBytes = new Uint8Array(stableBuffer.slice(0, 5));
+        const header = String.fromCharCode(...headerBytes);
+        if (!header.startsWith('%PDF')) {
+          throw new Error('Invalid PDF file format');
+        }
+
+        console.log(`✅ File processed successfully (${stableBuffer.byteLength} bytes)`);
+        setPdfData(stableBuffer);
+        setRetryCount(0);
+        return stableBuffer;
+
+      } catch (error) {
+        lastError = error;
+        console.error(`❌ Attempt ${attempt} failed:`, error.message);
+        
+        if (attempt < maxRetries) {
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+      }
+    }
+
+    throw new Error(`Failed after ${maxRetries} attempts: ${lastError.message}`);
+  }, [createStableArrayBuffer]);
+
+  // Process file on mount or file change
+  useEffect(() => {
+    if (file) {
+      processFile(file)
+        .catch(error => {
+          console.error('Final processing error:', error);
+          setError(error.message);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [file, processFile]);
 
   // Initialize page number from existing document
   useEffect(() => {
     if (existingDocument && existingDocument.currentPage) {
       setPageNumber(existingDocument.currentPage);
-      console.log(`📖 Loaded document at page ${existingDocument.currentPage}`);
     }
   }, [existingDocument]);
 
   // PDF document load success
   const onDocumentLoadSuccess = useCallback(({ numPages }) => {
-    console.log('✅ PDF LOAD SUCCESS:', { 
-      numPages, 
-      processingMethod,
-      pdfDataType: typeof pdfData,
-      pdfDataSize: pdfData?.byteLength || pdfData?.length || 'unknown'
-    });
-    
+    console.log('✅ PDF loaded successfully:', numPages, 'pages');
     setNumPages(numPages);
     setLoading(false);
     setError(null);
+    setRetryCount(0);
     
-    // Update document with page count
     if (documentId) {
       updateDocumentProgress(documentId, pageNumber, numPages);
     }
     
-    // Start timing for current page after a brief delay
     setTimeout(() => {
       startPageTimer(pageNumber, fileName);
     }, 100);
-  }, [documentId, pageNumber, updateDocumentProgress, startPageTimer, fileName, pdfData, processingMethod]);
+  }, [documentId, pageNumber, updateDocumentProgress, startPageTimer, fileName]);
 
-  // PDF document load error handling
+  // Enhanced error handling
   const onDocumentLoadError = useCallback((error) => {
-    console.error('❌ PDF LOAD ERROR:', {
-      error: error.message,
-      stack: error.stack,
-      processingMethod,
-      pdfDataType: typeof pdfData,
-      pdfDataSize: pdfData?.byteLength || pdfData?.length || 'unknown'
-    });
+    console.error('❌ PDF load error:', error);
     
-    setError(`PDF Load Error (${processingMethod}): ${error.message}`);
+    const errorMessage = error.message || error.toString();
+    
+    if (errorMessage.includes('detached ArrayBuffer') || 
+        errorMessage.includes('detached buffer')) {
+      setError('File buffer was detached. Attempting to reload...');
+      
+      // Auto-retry for buffer errors
+      if (retryCount < 2) {
+        setRetryCount(prev => prev + 1);
+        setTimeout(() => {
+          if (file) {
+            processFile(file);
+          }
+        }, 1000);
+        return;
+      }
+    }
+    
+    setError(`PDF loading failed: ${errorMessage}`);
     setLoading(false);
     stopPageTimer();
-  }, [stopPageTimer, pdfData, processingMethod]);
+  }, [stopPageTimer, file, processFile, retryCount]);
 
   // Manual retry function
-  const handleRetry = () => {
-    console.log('🔄 Manual retry initiated');
-    setPdfData(null);
-    setError(null);
-    setLoading(false);
-    // The useEffect will handle reprocessing
-  };
+  const handleRetry = useCallback(() => {
+    if (file) {
+      setError(null);
+      setRetryCount(0);
+      processFile(file);
+    }
+  }, [file, processFile]);
 
   // Handle page navigation
   const navigateToPage = useCallback((newPage) => {
     if (newPage === pageNumber || isPageChanging) return;
     
-    console.log(`🔄 Navigating from page ${pageNumber} to page ${newPage}`);
     setIsPageChanging(true);
-    
     stopPageTimer();
     setPageNumber(newPage);
     
@@ -216,13 +278,11 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   }, [pageNumber, isPageChanging, stopPageTimer, documentId, numPages, updateDocumentProgress, startPageTimer, fileName]);
 
   const goToPrevPage = useCallback(() => {
-    const newPage = Math.max(pageNumber - 1, 1);
-    navigateToPage(newPage);
+    navigateToPage(Math.max(pageNumber - 1, 1));
   }, [pageNumber, navigateToPage]);
 
   const goToNextPage = useCallback(() => {
-    const newPage = Math.min(pageNumber + 1, numPages || 1);
-    navigateToPage(newPage);
+    navigateToPage(Math.min(pageNumber + 1, numPages || 1));
   }, [pageNumber, numPages, navigateToPage]);
 
   const goToPage = useCallback((page) => {
@@ -235,15 +295,12 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const zoomIn = () => setScale(prev => Math.min(prev + 0.2, 3.0));
   const zoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.5));
 
-  // Save reading progress
   const saveProgress = useCallback(() => {
     if (documentId && Object.keys(pageTimes).length > 0) {
       updateDocumentPageTimes(documentId, pageTimes);
-      console.log(`💾 Progress saved for ${fileName}: ${Object.keys(pageTimes).length} pages`);
     }
-  }, [documentId, pageTimes, updateDocumentPageTimes, fileName]);
+  }, [documentId, pageTimes, updateDocumentPageTimes]);
 
-  // Manual timer control
   const toggleTimer = () => {
     if (isTracking) {
       stopPageTimer();
@@ -252,25 +309,18 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     }
   };
 
-  // Auto-save progress periodically
+  // Auto-save and cleanup effects
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (Object.keys(pageTimes).length > 0) {
-        saveProgress();
-      }
-    }, 30000);
+    const interval = setInterval(saveProgress, 30000);
     return () => clearInterval(interval);
-  }, [saveProgress, pageTimes]);
+  }, [saveProgress]);
 
-  // Handle browser tab visibility
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        console.log('👁️ Tab hidden - stopping timer');
         stopPageTimer();
         saveProgress();
       } else if (pdfData && numPages && !isPageChanging) {
-        console.log('👁️ Tab visible - starting timer');
         startPageTimer(pageNumber, fileName);
       }
     };
@@ -279,54 +329,66 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [pdfData, numPages, pageNumber, startPageTimer, stopPageTimer, saveProgress, fileName, isPageChanging]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log('🧹 PDF Viewer cleanup');
       stopPageTimer();
       saveProgress();
     };
   }, [stopPageTimer, saveProgress]);
 
-  if (!pdfData) {
+  // Loading state
+  if (loading || (!pdfData && !error)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-2xl">
-          <FileText className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-600 mb-2">
-            {loading ? 'Processing PDF...' : 'No PDF File'}
-          </h2>
-          <p className="text-gray-500 mb-4">
-            {loading ? 'Please wait while we prepare your PDF for viewing' : 'Please select a PDF file to start reading.'}
-          </p>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-gray-600 mb-2">Processing PDF...</h2>
+          <p className="text-gray-500 mb-4">{processingMethod}</p>
+          <div className="text-sm text-gray-400">
+            Enhanced buffer protection active
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error && !pdfData) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center max-w-2xl">
+          <AlertTriangle className="h-16 w-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-red-600 mb-2">PDF Processing Error</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
           
-          {loading && (
-            <div className="mt-4 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-              <p className="ml-2 text-sm text-gray-600">Method: {processingMethod}</p>
-            </div>
-          )}
-          
-          {/* Debug Info */}
-          <div className="mt-6 p-4 bg-gray-100 rounded-lg text-left">
-            <h3 className="font-semibold text-gray-800 mb-2">🔍 Emergency Debug Info</h3>
-            <div className="space-y-1 text-xs text-gray-600 font-mono">
-              <div><strong>Worker:</strong> {pdfjs.GlobalWorkerOptions.workerSrc}</div>
-              <div><strong>File:</strong> {file?.name || 'None'} ({file?.size || 0} bytes)</div>
-              <div><strong>PDF Data:</strong> {typeof pdfData} ({pdfData?.byteLength || pdfData?.length || 0} bytes)</div>
-              <div><strong>Processing Method:</strong> {processingMethod || 'None'}</div>
-              <div><strong>Error:</strong> {error || 'None'}</div>
-              <div><strong>Loading:</strong> {loading ? 'Yes' : 'No'}</div>
-            </div>
+          <div className="space-y-3">
+            <button
+              onClick={handleRetry}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <RefreshCw className="h-4 w-4 inline mr-2" />
+              Try Again
+            </button>
             
-            {error && (
+            {onBack && (
               <button
-                onClick={handleRetry}
-                className="mt-3 px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200"
+                onClick={onBack}
+                className="block mx-auto px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
               >
-                🔄 Retry Processing
+                ← Back to Upload
               </button>
             )}
+          </div>
+          
+          <div className="mt-6 p-4 bg-gray-100 rounded-lg text-left">
+            <h3 className="font-semibold text-gray-800 mb-2">Debug Information</h3>
+            <div className="space-y-1 text-xs text-gray-600 font-mono">
+              <div>File: {file?.name || 'None'}</div>
+              <div>Size: {file?.size || 0} bytes</div>
+              <div>Type: {file?.type || 'Unknown'}</div>
+              <div>Retry Count: {retryCount}</div>
+              <div>Worker: {pdfjs.GlobalWorkerOptions.workerSrc}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -340,16 +402,15 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
           {/* Main PDF Area */}
           <div className="flex-1">
             {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-red-800 font-medium">PDF Processing Error</p>
-                    <p className="text-red-600 text-sm mt-1">{error}</p>
-                    <p className="text-red-500 text-xs mt-1">Method: {processingMethod}</p>
+                    <p className="text-yellow-800 font-medium">Warning</p>
+                    <p className="text-yellow-600 text-sm mt-1">{error}</p>
                   </div>
                   <button
                     onClick={handleRetry}
-                    className="flex items-center space-x-1 px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                    className="flex items-center space-x-1 px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200"
                   >
                     <RefreshCw className="h-4 w-4" />
                     <span>Retry</span>
@@ -363,7 +424,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
               {numPages && (
                 <div className="bg-green-50 border-b border-green-200 px-6 py-3">
                   <p className="text-green-800 text-sm">
-                    ✅ PDF loaded successfully using <strong>{processingMethod}</strong> method
+                    ✅ PDF loaded successfully with enhanced buffer protection
                   </p>
                 </div>
               )}
@@ -486,27 +547,22 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                     file={pdfData}
                     onLoadSuccess={onDocumentLoadSuccess}
                     onLoadError={onDocumentLoadError}
-                    options={{
-                      disableTextLayer: true,
-                      disableAnnotationLayer: true,
-                    }}
                     loading={
                       <div className="text-center py-12">
                         <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                        <p className="text-gray-600 mt-2">Loading PDF document...</p>
-                        <p className="text-gray-500 text-sm mt-1">Method: {processingMethod}</p>
+                        <p className="text-gray-600 mt-2">Loading PDF...</p>
                       </div>
                     }
                     error={
                       <div className="text-center py-12">
-                        <div className="text-red-600 mb-2">❌ Failed to load PDF</div>
-                        <p className="text-gray-600 text-sm mb-2">Method: {processingMethod}</p>
+                        <AlertTriangle className="h-8 w-8 text-red-500 mx-auto mb-2" />
+                        <p className="text-red-600 mb-2">Failed to load PDF</p>
                         <button
                           onClick={handleRetry}
-                          className="flex items-center space-x-1 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors mx-auto"
+                          className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200"
                         >
-                          <RefreshCw className="h-4 w-4" />
-                          <span>Retry</span>
+                          <RefreshCw className="h-4 w-4 inline mr-1" />
+                          Retry
                         </button>
                       </div>
                     }
@@ -543,16 +599,12 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                       style={{ width: `${(pageNumber / numPages) * 100}%` }}
                     ></div>
                   </div>
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>Page 1</span>
-                    <span>Page {numPages}</span>
-                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Sidebar with Timer and Stats */}
+          {/* Sidebar */}
           <div className="w-80 space-y-4">
             <ReadingTimer
               isTracking={isTracking}

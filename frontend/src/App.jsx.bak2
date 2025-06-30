@@ -17,7 +17,7 @@ import ExamDateManager from './components/exams/ExamDateManager';
 import FolderManager from './components/folders/FolderManager';
 // Buffer diagnostic utility
 import { bufferDiagnostic } from './utils/bufferDiagnostic';
-import { timerDiagnostic } from './utils/timerDiagnostic';
+
 import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import { 
   FileText, 
