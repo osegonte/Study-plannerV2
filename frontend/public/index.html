@@ -10,6 +10,13 @@
       content="PDF Study Planner - Track your reading time and study progress"
     />
     <title>PDF Study Planner</title>
+    
+    <!-- 🔧 CRITICAL: Force PDF.js worker configuration BEFORE React loads -->
+    <script>
+      // Set worker configuration globally before any imports
+      window.PDFJS_WORKER_SRC = '/pdf.worker.min.js';
+      console.log('🔧 Pre-configured PDF.js worker:', window.PDFJS_WORKER_SRC);
+    </script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
