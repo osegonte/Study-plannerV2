@@ -5,24 +5,56 @@ const STORAGE_KEY = 'pdf-study-planner-documents';
 export const useDocuments = () => {
   const [documents, setDocuments] = useState([]);
 
-  // Load documents from localStorage on mount
-  useEffect(() => {
+  // Enhanced load function with persistent storage
+  const loadDocuments = async () => {
     try {
+      // Try to load from persistent storage first
+      if (window.persistentStorage) {
+        const persistentData = await window.persistentStorage.loadFromFile('documents');
+        if (persistentData && Array.isArray(persistentData)) {
+          setDocuments(persistentData);
+          // Also save to localStorage for backup
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(persistentData));
+          console.log('📄 Loaded documents from persistent storage');
+          return;
+        }
+      }
+
+      // Fallback to localStorage
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        setDocuments(JSON.parse(saved));
+        const data = JSON.parse(saved);
+        setDocuments(data);
+        console.log('📄 Loaded documents from localStorage');
       }
     } catch (error) {
-      console.error('Failed to load documents from localStorage:', error);
+      console.error('Failed to load documents:', error);
     }
+  };
+
+  // Enhanced save function with persistent storage
+  const saveDocuments = async (documentsData) => {
+    try {
+      // Save to localStorage immediately
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(documentsData));
+      
+      // Save to persistent storage if available
+      if (window.persistentStorage) {
+        await window.persistentStorage.saveToFile('documents', documentsData);
+        console.log('💾 Saved documents to persistent storage');
+      }
+    } catch (error) {
+      console.error('Failed to save documents:', error);
+    }
+  };
+
+  useEffect(() => {
+    loadDocuments();
   }, []);
 
-  // Save documents to localStorage whenever documents change
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(documents));
-    } catch (error) {
-      console.error('Failed to save documents to localStorage:', error);
+    if (documents.length >= 0) { // Save even empty arrays
+      saveDocuments(documents);
     }
   }, [documents]);
 
@@ -35,7 +67,7 @@ export const useDocuments = () => {
       totalPages: documentData.totalPages || 0,
       currentPage: 1,
       pageTimes: {},
-      cacheKey: documentData.cacheKey || null, // 🆕 ADD cache key support
+      cacheKey: documentData.cacheKey || null,
       uploadedAt: new Date().toISOString(),
       lastReadAt: new Date().toISOString()
     };
@@ -85,7 +117,6 @@ export const useDocuments = () => {
     ));
   };
 
-  // 🆕 ADD method to update cache key
   const updateDocumentCacheKey = (documentId, cacheKey) => {
     setDocuments(prev => prev.map(doc =>
       doc.id === documentId
@@ -103,6 +134,6 @@ export const useDocuments = () => {
     getDocumentsByTopic,
     updateDocumentPageTimes,
     updateDocumentProgress,
-    updateDocumentCacheKey // 🆕 ADD this
+    updateDocumentCacheKey
   };
 };

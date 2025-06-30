@@ -7,22 +7,56 @@ export const useTopics = () => {
   const [topics, setTopics] = useState([]);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
 
-  useEffect(() => {
+  // Enhanced load function with persistent storage
+  const loadTopics = async () => {
     try {
+      // Try to load from persistent storage first
+      if (window.persistentStorage) {
+        const persistentData = await window.persistentStorage.loadFromFile('topics');
+        if (persistentData && Array.isArray(persistentData)) {
+          setTopics(persistentData);
+          // Also save to localStorage for backup
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(persistentData));
+          console.log('📁 Loaded topics from persistent storage');
+          return;
+        }
+      }
+
+      // Fallback to localStorage
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        setTopics(JSON.parse(saved));
+        const data = JSON.parse(saved);
+        setTopics(data);
+        console.log('📁 Loaded topics from localStorage');
       }
     } catch (error) {
-      console.error('Failed to load topics from localStorage:', error);
+      console.error('Failed to load topics:', error);
     }
+  };
+
+  // Enhanced save function with persistent storage
+  const saveTopics = async (topicsData) => {
+    try {
+      // Save to localStorage immediately
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(topicsData));
+      
+      // Save to persistent storage if available
+      if (window.persistentStorage) {
+        await window.persistentStorage.saveToFile('topics', topicsData);
+        console.log('💾 Saved topics to persistent storage');
+      }
+    } catch (error) {
+      console.error('Failed to save topics:', error);
+    }
+  };
+
+  useEffect(() => {
+    loadTopics();
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(topics));
-    } catch (error) {
-      console.error('Failed to save topics to localStorage:', error);
+    if (topics.length > 0) {
+      saveTopics(topics);
     }
   }, [topics]);
 
@@ -42,16 +76,18 @@ export const useTopics = () => {
         folderCreatedAt: null
       };
 
-      setTopics(prev => [...prev, newTopic]);
+      const updatedTopics = [...topics, newTopic];
+      setTopics(updatedTopics);
 
       try {
         const folderPath = await localFileManager.createTopicFolder(newTopic);
         
-        setTopics(prev => prev.map(topic => 
+        const topicsWithFolder = updatedTopics.map(topic => 
           topic.id === newTopic.id 
             ? { ...topic, folderPath, folderCreatedAt: new Date().toISOString() }
             : topic
-        ));
+        );
+        setTopics(topicsWithFolder);
 
         if (window.showNotification) {
           window.showNotification(`✅ Topic "${newTopic.name}" created! Folder planned for creation.`, 'success');

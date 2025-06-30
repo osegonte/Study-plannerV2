@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, X, CheckCircle, AlertCircle, Folder, Download } from 'lucide-react';
-import { localFileManager } from '../../utils/localFileManager';
+import { Upload, FileText, X, CheckCircle, AlertCircle, Folder, RefreshCw } from 'lucide-react';
+import { pdfFileHandler, PDFErrorHandler } from '../../utils/pdfFileHandler';
 
 const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
   const [dragActive, setDragActive] = useState(false);
@@ -11,7 +11,7 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
 
   const fileInputRef = useRef(null);
 
-  // Validate PDF file
+  // Enhanced file validation
   const validateFile = (file) => {
     const errors = [];
     
@@ -48,7 +48,7 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
     e.target.value = ''; // Reset input
   };
 
-  // Process uploaded files with improved error handling
+  // Enhanced file processing with buffer detachment protection
   const processFiles = async (files) => {
     setError(null);
     setIsProcessing(true);
@@ -62,30 +62,55 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
         }
 
         try {
-          console.log('📄 Processing file:', file.name);
+          console.log('📄 Processing file with enhanced handler:', file.name);
           
-          // Process file using the enhanced file manager
-          const fileData = await localFileManager.processFileForViewing(file);
+          // Process file using the enhanced file handler with buffer protection
+          const cacheKey = await pdfFileHandler.processFile(file);
           
-          // Add to selected files with processed data
+          // Verify the file was processed correctly
+          if (!pdfFileHandler.hasFile(cacheKey)) {
+            throw new Error('File processing verification failed');
+          }
+          
+          // Create processed file data with stable references
           const processedFile = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
             file,
             name: file.name,
             size: file.size,
-            cacheKey: fileData.cacheKey,
-            processedData: fileData,
+            cacheKey,
             status: 'processed',
-            folderPath: null,
-            folderSaved: false
+            processedAt: Date.now(),
+            retryCount: 0
           };
 
           setSelectedFiles(prev => [...prev, processedFile]);
-          console.log('✅ File processed successfully:', file.name);
+          console.log('✅ File processed successfully with stable buffer:', file.name);
           
         } catch (fileError) {
           console.error('Error processing file:', fileError);
-          setError(`Failed to process ${file.name}: ${fileError.message}`);
+          
+          // Check if it's a retryable error
+          if (PDFErrorHandler.shouldRetry(fileError)) {
+            setError(`${file.name}: Buffer processing failed - will retry during upload`);
+            
+            // Add file with retry flag
+            const retryFile = {
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+              file,
+              name: file.name,
+              size: file.size,
+              cacheKey: null,
+              status: 'retry_needed',
+              processedAt: Date.now(),
+              retryCount: 0,
+              error: fileError.message
+            };
+            
+            setSelectedFiles(prev => [...prev, retryFile]);
+          } else {
+            setError(`Failed to process ${file.name}: ${fileError.message}`);
+          }
         }
       }
     } catch (error) {
@@ -120,34 +145,100 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
 
   // Remove file from selection
   const removeFile = (fileId) => {
-    setSelectedFiles(prev => prev.filter(f => f.id !== fileId));
+    setSelectedFiles(prev => {
+      const fileToRemove = prev.find(f => f.id === fileId);
+      if (fileToRemove && fileToRemove.cacheKey) {
+        // Clean up cached data
+        pdfFileHandler.removeFile(fileToRemove.cacheKey);
+      }
+      return prev.filter(f => f.id !== fileId);
+    });
   };
 
-  // Upload files to topic
+  // Retry processing a file
+  const retryFile = async (fileId) => {
+    const fileData = selectedFiles.find(f => f.id === fileId);
+    if (!fileData) return;
+
+    setSelectedFiles(prev => prev.map(f => 
+      f.id === fileId 
+        ? { ...f, status: 'processing', retryCount: f.retryCount + 1 }
+        : f
+    ));
+
+    try {
+      console.log(`🔄 Retrying file processing: ${fileData.name} (attempt ${fileData.retryCount + 1})`);
+      
+      const cacheKey = await pdfFileHandler.processFile(fileData.file);
+      
+      setSelectedFiles(prev => prev.map(f => 
+        f.id === fileId 
+          ? { ...f, cacheKey, status: 'processed', error: null }
+          : f
+      ));
+      
+      console.log('✅ File retry successful:', fileData.name);
+      
+    } catch (error) {
+      console.error('File retry failed:', error);
+      
+      setSelectedFiles(prev => prev.map(f => 
+        f.id === fileId 
+          ? { ...f, status: 'retry_needed', error: error.message }
+          : f
+      ));
+    }
+  };
+
+  // Enhanced upload to topic with retry logic
   const handleUploadToTopic = async () => {
     if (!selectedTopic) {
       setError('Please select a topic first');
       return;
     }
     
-    const processedFiles = selectedFiles.filter(f => f.status === 'processed');
-    if (processedFiles.length === 0) {
-      setError('No files to upload');
+    const filesToUpload = selectedFiles.filter(f => f.status === 'processed' || f.status === 'retry_needed');
+    if (filesToUpload.length === 0) {
+      setError('No files ready to upload');
       return;
     }
     
     setIsProcessing(true);
     
     try {
-      for (const fileData of processedFiles) {
-        // Upload to app with processed file data
-        await onUpload(fileData.file, {
-          topicId: selectedTopic,
-          cacheKey: fileData.cacheKey,
-          processedData: fileData.processedData
-        });
-        
-        console.log('✅ File uploaded successfully:', fileData.name);
+      for (const fileData of filesToUpload) {
+        try {
+          let cacheKey = fileData.cacheKey;
+          
+          // If file needs retry or doesn't have cache key, process it now
+          if (!cacheKey || fileData.status === 'retry_needed') {
+            console.log(`🔄 Processing file during upload: ${fileData.name}`);
+            cacheKey = await pdfFileHandler.processFile(fileData.file);
+          }
+          
+          // Verify file is ready
+          if (!pdfFileHandler.hasFile(cacheKey)) {
+            throw new Error('File verification failed');
+          }
+          
+          // Upload to app with processed file data
+          await onUpload(fileData.file, {
+            topicId: selectedTopic,
+            cacheKey: cacheKey
+          });
+          
+          console.log('✅ File uploaded successfully:', fileData.name);
+          
+        } catch (fileUploadError) {
+          console.error(`Upload failed for ${fileData.name}:`, fileUploadError);
+          
+          // If it's a buffer error, don't fail the whole upload
+          if (PDFErrorHandler.shouldRetry(fileUploadError)) {
+            setError(`⚠️ ${fileData.name} may need to be re-uploaded due to processing issues`);
+          } else {
+            throw fileUploadError;
+          }
+        }
       }
       
       // Clear files after successful upload
@@ -155,7 +246,7 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
       setError(null);
       
       if (window.showNotification) {
-        window.showNotification(`✅ ${processedFiles.length} PDF(s) uploaded successfully!`, 'success');
+        window.showNotification(`✅ ${filesToUpload.length} PDF(s) uploaded successfully!`, 'success');
       }
       
     } catch (error) {
@@ -265,7 +356,7 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
           
           <p className="text-gray-600 mb-4">
             {isProcessing 
-              ? 'Please wait while we process your PDFs...'
+              ? 'Please wait while we process your PDFs with enhanced buffer protection...'
               : 'Drag and drop PDF files here, or click to select files'
             }
           </p>
@@ -331,13 +422,36 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
                       </p>
                       <p className="text-xs text-gray-500">
                         {formatFileSize(fileData.size)}
+                        {fileData.retryCount > 0 && (
+                          <span className="ml-2 text-yellow-600">
+                            (Retry {fileData.retryCount})
+                          </span>
+                        )}
                       </p>
+                      {fileData.error && (
+                        <p className="text-xs text-red-600 mt-1">{fileData.error}</p>
+                      )}
                     </div>
                   </div>
                   
                   <div className="flex items-center space-x-2">
                     {fileData.status === 'processed' && (
                       <CheckCircle className="h-4 w-4 text-green-600" />
+                    )}
+                    
+                    {fileData.status === 'retry_needed' && (
+                      <button
+                        onClick={() => retryFile(fileData.id)}
+                        className="p-1 text-yellow-600 hover:text-yellow-800 transition-colors"
+                        title="Retry processing"
+                        disabled={isProcessing}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </button>
+                    )}
+                    
+                    {fileData.status === 'processing' && (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
                     )}
                     
                     <button
@@ -385,7 +499,7 @@ const EnhancedPDFUpload = ({ topics, onUpload, onCreateTopic }) => {
             <div>
               <h4 className="text-sm font-medium text-blue-800">Processing PDFs</h4>
               <p className="text-sm text-blue-700">
-                Converting files for optimal viewing and organization...
+                Converting files with enhanced buffer protection for optimal viewing...
               </p>
             </div>
           </div>

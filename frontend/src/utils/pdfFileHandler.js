@@ -1,25 +1,23 @@
-// utils/pdfFileHandler.js
+// Enhanced PDF File Handler with Buffer Detachment Fix
 export class PDFFileHandler {
   constructor() {
-    this.fileCache = new Map(); // In-memory cache for current session
+    this.fileCache = new Map();
+    this.bufferPool = new Map(); // Pool to keep references
   }
 
   /**
-   * Convert File to ArrayBuffer and store it properly
+   * Convert File to stable ArrayBuffer without detachment
    * @param {File} file - The PDF file
    * @returns {Promise<string>} - Returns cache key for the file
    */
   async processFile(file) {
     try {
-      // Validate file
       if (!file || file.type !== 'application/pdf') {
         throw new Error('Invalid PDF file');
       }
 
-      // Generate unique cache key
-      const cacheKey = `${file.name}-${file.size}-${file.lastModified}`;
+      const cacheKey = `${file.name}-${file.size}-${file.lastModified}-${Date.now()}`;
       
-      // Check if already processed
       if (this.fileCache.has(cacheKey)) {
         console.log('📄 File already cached:', cacheKey);
         return cacheKey;
@@ -27,12 +25,13 @@ export class PDFFileHandler {
 
       console.log('📄 Processing PDF file:', file.name);
       
-      // Convert File to ArrayBuffer
-      const arrayBuffer = await this.fileToArrayBuffer(file);
+      // Create stable ArrayBuffer that won't get detached
+      const stableBuffer = await this.createStableArrayBuffer(file);
       
-      // Store in cache with metadata
-      this.fileCache.set(cacheKey, {
-        arrayBuffer: arrayBuffer,
+      // Store multiple references to prevent garbage collection
+      const fileData = {
+        arrayBuffer: stableBuffer,
+        backupBuffer: stableBuffer.slice(0), // Create backup copy
         metadata: {
           name: file.name,
           size: file.size,
@@ -40,9 +39,12 @@ export class PDFFileHandler {
           lastModified: file.lastModified
         },
         processedAt: Date.now()
-      });
-
-      console.log('✅ File processed and cached:', cacheKey);
+      };
+      
+      this.fileCache.set(cacheKey, fileData);
+      this.bufferPool.set(cacheKey, stableBuffer); // Keep extra reference
+      
+      console.log('✅ File processed and cached with stable buffer:', cacheKey);
       return cacheKey;
       
     } catch (error) {
@@ -52,20 +54,41 @@ export class PDFFileHandler {
   }
 
   /**
-   * Convert File to ArrayBuffer using FileReader
+   * Create stable ArrayBuffer that resists detachment
    * @param {File} file - The file to convert
-   * @returns {Promise<ArrayBuffer>} - Promise that resolves to ArrayBuffer
+   * @returns {Promise<ArrayBuffer>} - Stable ArrayBuffer
    */
-  fileToArrayBuffer(file) {
+  async createStableArrayBuffer(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       
       reader.onload = (event) => {
-        const arrayBuffer = event.target.result;
-        if (arrayBuffer instanceof ArrayBuffer) {
-          resolve(arrayBuffer);
-        } else {
-          reject(new Error('Failed to convert file to ArrayBuffer'));
+        try {
+          const originalBuffer = event.target.result;
+          
+          if (!(originalBuffer instanceof ArrayBuffer)) {
+            reject(new Error('Failed to create ArrayBuffer'));
+            return;
+          }
+          
+          // Create a stable copy that won't be detached
+          const stableBuffer = new ArrayBuffer(originalBuffer.byteLength);
+          const stableView = new Uint8Array(stableBuffer);
+          const originalView = new Uint8Array(originalBuffer);
+          
+          // Copy data to stable buffer
+          stableView.set(originalView);
+          
+          // Verify the copy
+          if (stableBuffer.byteLength !== originalBuffer.byteLength) {
+            reject(new Error('Buffer copy verification failed'));
+            return;
+          }
+          
+          resolve(stableBuffer);
+          
+        } catch (error) {
+          reject(new Error(`ArrayBuffer creation failed: ${error.message}`));
         }
       };
       
@@ -77,15 +100,15 @@ export class PDFFileHandler {
         reject(new Error('FileReader aborted'));
       };
       
-      // Read as ArrayBuffer (most reliable for PDF.js)
+      // Read as ArrayBuffer
       reader.readAsArrayBuffer(file);
     });
   }
 
   /**
-   * Get file data for react-pdf
+   * Get file data for react-pdf with detachment protection
    * @param {string} cacheKey - The cache key for the file
-   * @returns {ArrayBuffer|null} - ArrayBuffer for react-pdf
+   * @returns {ArrayBuffer|null} - Safe ArrayBuffer for react-pdf
    */
   getFileForPDF(cacheKey) {
     const cached = this.fileCache.get(cacheKey);
@@ -94,8 +117,61 @@ export class PDFFileHandler {
       return null;
     }
     
-    // Return a copy of the ArrayBuffer to prevent detachment
-    return cached.arrayBuffer.slice();
+    try {
+      // Check if original buffer is still valid
+      if (cached.arrayBuffer.byteLength === 0) {
+        console.warn('⚠️ Original buffer detached, using backup');
+        // Use backup buffer
+        if (cached.backupBuffer && cached.backupBuffer.byteLength > 0) {
+          return cached.backupBuffer.slice(0);
+        } else {
+          console.error('❌ Backup buffer also invalid');
+          return null;
+        }
+      }
+      
+      // Return a fresh copy to prevent detachment
+      return cached.arrayBuffer.slice(0);
+      
+    } catch (error) {
+      console.error('❌ Error retrieving file data:', error);
+      
+      // Try backup buffer
+      try {
+        if (cached.backupBuffer) {
+          console.log('🔄 Attempting backup buffer recovery');
+          return cached.backupBuffer.slice(0);
+        }
+      } catch (backupError) {
+        console.error('❌ Backup buffer also failed:', backupError);
+      }
+      
+      return null;
+    }
+  }
+
+  /**
+   * Create a new stable reference for react-pdf
+   * @param {string} cacheKey - The cache key
+   * @returns {ArrayBuffer|Uint8Array|null} - Stable data for PDF.js
+   */
+  getStableFileData(cacheKey) {
+    const cached = this.fileCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+    
+    try {
+      // Create Uint8Array which is more stable for PDF.js
+      const buffer = this.getFileForPDF(cacheKey);
+      if (buffer) {
+        return new Uint8Array(buffer);
+      }
+      return null;
+    } catch (error) {
+      console.error('❌ Error creating stable file data:', error);
+      return null;
+    }
   }
 
   /**
@@ -109,12 +185,21 @@ export class PDFFileHandler {
   }
 
   /**
-   * Check if file is cached
+   * Check if file is cached and valid
    * @param {string} cacheKey - The cache key to check
-   * @returns {boolean} - Whether file is cached
+   * @returns {boolean} - Whether file exists and is valid
    */
   hasFile(cacheKey) {
-    return this.fileCache.has(cacheKey);
+    const cached = this.fileCache.get(cacheKey);
+    if (!cached) return false;
+    
+    try {
+      // Verify buffer is still valid
+      return cached.arrayBuffer.byteLength > 0 || 
+             (cached.backupBuffer && cached.backupBuffer.byteLength > 0);
+    } catch (error) {
+      return false;
+    }
   }
 
   /**
@@ -123,6 +208,7 @@ export class PDFFileHandler {
    */
   removeFile(cacheKey) {
     this.fileCache.delete(cacheKey);
+    this.bufferPool.delete(cacheKey);
     console.log('🗑️ File removed from cache:', cacheKey);
   }
 
@@ -131,6 +217,7 @@ export class PDFFileHandler {
    */
   clearCache() {
     this.fileCache.clear();
+    this.bufferPool.clear();
     console.log('🧹 File cache cleared');
   }
 
@@ -145,7 +232,8 @@ export class PDFFileHandler {
     return {
       fileCount: this.fileCache.size,
       totalSize: totalSize,
-      totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2)
+      totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
+      validFiles: files.filter(f => f.arrayBuffer.byteLength > 0).length
     };
   }
 
@@ -155,11 +243,38 @@ export class PDFFileHandler {
    * @returns {string|null} - Data URL
    */
   createDataURL(cacheKey) {
-    const cached = this.fileCache.get(cacheKey);
-    if (!cached) return null;
-    
-    const blob = new Blob([cached.arrayBuffer], { type: 'application/pdf' });
-    return URL.createObjectURL(blob);
+    try {
+      const arrayBuffer = this.getFileForPDF(cacheKey);
+      if (!arrayBuffer) return null;
+      
+      const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
+      return URL.createObjectURL(blob);
+    } catch (error) {
+      console.error('❌ Error creating data URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Refresh a file's buffer to prevent detachment
+   * @param {string} cacheKey - The cache key
+   * @param {File} originalFile - The original file (if available)
+   */
+  async refreshBuffer(cacheKey, originalFile = null) {
+    try {
+      if (originalFile) {
+        console.log('🔄 Refreshing buffer from original file');
+        await this.processFile(originalFile);
+      } else {
+        const cached = this.fileCache.get(cacheKey);
+        if (cached && cached.backupBuffer) {
+          console.log('🔄 Refreshing buffer from backup');
+          cached.arrayBuffer = cached.backupBuffer.slice(0);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to refresh buffer:', error);
+    }
   }
 }
 
@@ -169,8 +284,12 @@ export const pdfFileHandler = new PDFFileHandler();
 // Enhanced error handling for PDF loading
 export const PDFErrorHandler = {
   getErrorMessage(error) {
+    if (error?.message?.includes('Buffer is already detached') || 
+        error?.message?.includes('detached ArrayBuffer')) {
+      return 'File data was corrupted during upload. Please try uploading the PDF again.';
+    }
     if (error?.message?.includes('ArrayBuffer')) {
-      return 'File data was corrupted. Please re-upload the PDF file.';
+      return 'File processing error. Please re-upload the PDF file.';
     }
     if (error?.message?.includes('Invalid PDF')) {
       return 'This file is not a valid PDF document.';
@@ -185,9 +304,9 @@ export const PDFErrorHandler = {
   },
 
   shouldRetry(error) {
-    // Retry for network or temporary errors, not for file format errors
-    return !error?.message?.includes('Invalid PDF') && 
-           !error?.message?.includes('encrypted') &&
-           !error?.message?.includes('corrupted');
+    // Retry for buffer detachment errors
+    return error?.message?.includes('Buffer is already detached') ||
+           error?.message?.includes('detached ArrayBuffer') ||
+           error?.message?.includes('ArrayBuffer');
   }
 };

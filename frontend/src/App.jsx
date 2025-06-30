@@ -9,7 +9,7 @@ import EnhancedAnalyticsDashboard from './components/analytics/EnhancedAnalytics
 import StudyGoals from './components/goals/StudyGoals';
 import StudyReports from './components/reports/StudyReports';
 import StudyInsights from './components/insights/StudyInsights';
-
+import PDFDiagnostic from './components/debug/PDFDiagnostic';
 // Phase 1 New Imports - Folder Management
 import ExamDateManager from './components/exams/ExamDateManager';
 import FolderManager from './components/folders/FolderManager';
@@ -26,12 +26,13 @@ import {
   Lightbulb,
   Home,
   Calendar,
-  HardDrive, // For Folder Manager
+  HardDrive,
   TrendingUp,
   User,
   LogOut,
   AlertCircle,
-  Save
+  Save,
+  Database // Added for storage indicator
 } from 'lucide-react';
 import { 
   calculateTopicEstimates, 
@@ -46,6 +47,7 @@ const AppContent = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [currentFileSession, setCurrentFileSession] = useState(new Map());
+  const [storageStatus, setStorageStatus] = useState('initializing'); // Added storage status
 
   const {
     topics,
@@ -56,6 +58,88 @@ const AppContent = () => {
     addDocumentToTopic,
     getTopicDocuments
   } = useStudyPlanner();
+
+  // Enhanced persistent storage initialization
+  useEffect(() => {
+    const initializePersistentStorage = async () => {
+      try {
+        console.log('🗄️ Initializing persistent storage...');
+        
+        // Wait for storage manager to be available
+        let attempts = 0;
+        const maxAttempts = 20;
+        
+        const waitForStorage = () => {
+          return new Promise((resolve) => {
+            const checkStorage = () => {
+              if (window.persistentStorage) {
+                resolve(true);
+              } else if (attempts < maxAttempts) {
+                attempts++;
+                setTimeout(checkStorage, 500);
+              } else {
+                resolve(false);
+              }
+            };
+            checkStorage();
+          });
+        };
+
+        const storageAvailable = await waitForStorage();
+        
+        if (storageAvailable) {
+          await window.persistentStorage.initialize();
+          setStorageStatus('connected');
+          console.log('✅ Persistent storage initialized successfully');
+          
+          // Show success notification
+          if (window.showNotification) {
+            window.showNotification('💾 Persistent storage enabled - your data is safe!', 'success');
+          }
+          
+          // Set up auto-backup notification
+          setTimeout(() => {
+            if (window.showNotification) {
+              window.showNotification('📦 Auto-backup system active', 'info', 3000);
+            }
+          }, 2000);
+          
+        } else {
+          setStorageStatus('unavailable');
+          console.warn('⚠️ Persistent storage not available - using localStorage only');
+          
+          if (window.showNotification) {
+            window.showNotification('⚠️ Using browser storage only - consider enabling persistent storage', 'warning');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to initialize persistent storage:', error);
+        setStorageStatus('error');
+        
+        if (window.showNotification) {
+          window.showNotification('❌ Storage initialization failed', 'error');
+        }
+      }
+    };
+
+    initializePersistentStorage();
+  }, []);
+
+  // Enhanced storage save function
+  const saveWithPersistence = async (key, data) => {
+    try {
+      // Save to localStorage (existing behavior)
+      localStorage.setItem(key, JSON.stringify(data));
+      
+      // Save to persistent storage if available
+      if (window.persistentStorage && storageStatus === 'connected') {
+        await window.persistentStorage.saveToFile(key.replace('pdf-study-planner-', ''), data);
+        console.log(`💾 Saved ${key} to persistent storage`);
+      }
+    } catch (error) {
+      console.error('Failed to save with persistence:', error);
+    }
+  };
 
   const handleOnboardingComplete = (userData) => {
     createAccount(userData);
@@ -128,6 +212,37 @@ const AppContent = () => {
     setUploadError(null);
   };
 
+  // Manual backup function
+  const handleManualBackup = async () => {
+    if (window.persistentStorage && storageStatus === 'connected') {
+      try {
+        await window.persistentStorage.backupAllData();
+        if (window.showNotification) {
+          window.showNotification('📦 Backup created successfully!', 'success');
+        }
+      } catch (error) {
+        console.error('Backup failed:', error);
+        if (window.showNotification) {
+          window.showNotification('❌ Backup failed', 'error');
+        }
+      }
+    }
+  };
+
+  // Storage status indicator
+  const getStorageStatusIcon = () => {
+    switch (storageStatus) {
+      case 'connected':
+        return <Database className="h-4 w-4 text-green-600" title="Persistent storage active" />;
+      case 'unavailable':
+        return <Database className="h-4 w-4 text-yellow-600" title="Browser storage only" />;
+      case 'error':
+        return <Database className="h-4 w-4 text-red-600" title="Storage error" />;
+      default:
+        return <Database className="h-4 w-4 text-gray-400" title="Initializing storage" />;
+    }
+  };
+
   // Phase 1: Enhanced dashboard with exam countdown
   const renderDashboard = () => {
     const upcomingExams = topics
@@ -161,7 +276,25 @@ const AppContent = () => {
           </div>
         )}
 
-        {/* Urgent Exam Alerts */}
+        {/* Storage Status Banner */}
+        {storageStatus === 'connected' && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center space-x-2">
+              <Database className="h-5 w-5 text-green-600" />
+              <div>
+                <h3 className="text-green-800 font-medium">✅ Persistent Storage Active</h3>
+                <p className="text-green-700 text-sm">Your data is automatically saved and backed up every 5 minutes</p>
+              </div>
+              <button
+                onClick={handleManualBackup}
+                className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+              >
+                📦 Backup Now
+              </button>
+            </div>
+          </div>
+        )}
+
         {urgentExams.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <div className="flex items-center space-x-2 mb-2">
@@ -331,6 +464,7 @@ const AppContent = () => {
     { id: 'topics', label: 'Topics', icon: FolderPlus },
     { id: 'exams', label: 'Exam Dates', icon: Calendar },
     { id: 'folders', label: 'Folder Manager', icon: HardDrive },
+    { id: 'debug', label: '🔧 Debug PDF', icon: AlertCircle },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'reports', label: 'Reports', icon: FileBarChart },
@@ -352,6 +486,15 @@ const AppContent = () => {
               <span className="text-sm bg-green-100 text-green-800 px-2 py-1 rounded-full">
                 Phase 1 ✨
               </span>
+              {/* Storage status indicator */}
+              <div className="flex items-center space-x-1">
+                {getStorageStatusIcon()}
+                <span className="text-xs text-gray-500">
+                  {storageStatus === 'connected' ? 'Persistent' : 
+                   storageStatus === 'unavailable' ? 'Browser Only' : 
+                   storageStatus === 'error' ? 'Error' : 'Loading...'}
+                </span>
+              </div>
             </div>
             
             <div className="flex items-center space-x-4">
@@ -362,6 +505,18 @@ const AppContent = () => {
                 >
                   <ArrowLeft className="h-4 w-4" />
                   <span>Back to Dashboard</span>
+                </button>
+              )}
+
+              {/* Manual backup button */}
+              {storageStatus === 'connected' && (
+                <button
+                  onClick={handleManualBackup}
+                  className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                  title="Create manual backup"
+                >
+                  <Save className="h-4 w-4" />
+                  <span className="hidden md:block">Backup</span>
                 </button>
               )}
 
@@ -447,6 +602,7 @@ const AppContent = () => {
         )}
         {currentView === 'exams' && <ExamDateManager />}
         {currentView === 'folders' && <FolderManager />}
+        {currentView === 'debug' && <PDFDiagnostic />}
         {currentView === 'analytics' && <EnhancedAnalyticsDashboard />}
         {currentView === 'goals' && <StudyGoals />}
         {currentView === 'reports' && <StudyReports />}

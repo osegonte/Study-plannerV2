@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save, Play, Pause } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Save, Play, Pause, RefreshCw } from 'lucide-react';
 import { useTimeTracking } from '../../hooks/useTimeTracking';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';
-import { pdfFileHandler, PDFErrorHandler } from '../../utils/pdfFileHandler'; // 🆕 ADD this import
+import { pdfFileHandler, PDFErrorHandler } from '../../utils/pdfFileHandler';
 import ReadingTimer from '../timer/ReadingTimer';
 import TimeTrackingStats from '../timer/TimeTrackingStats';
 import ReadingEstimates from '../timer/ReadingEstimates';
@@ -13,14 +13,15 @@ import ReadingSpeedIndicator from '../timer/ReadingSpeedIndicator';
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
-  const [pdfData, setPdfData] = useState(null); // 🔄 Use pdfData instead of file
-  const [fileKey, setFileKey] = useState(null); // 🆕 ADD file key state
+  const [pdfData, setPdfData] = useState(null);
+  const [fileKey, setFileKey] = useState(null);
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isPageChanging, setIsPageChanging] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById, updateDocumentCacheKey } = useStudyPlanner();
 
@@ -40,18 +41,25 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     getPageTime
   } = useTimeTracking(initialPageTimes);
 
-  // 🆕 Process file when component mounts or file changes
+  // Enhanced file processing with retry logic
   useEffect(() => {
     const processFileForViewing = async () => {
       if (!file) return;
 
-      // Check if document already has a cache key
+      // Check if document already has a cache key and it's still valid
       if (existingDocument?.cacheKey && pdfFileHandler.hasFile(existingDocument.cacheKey)) {
         console.log('📄 Using existing cache key:', existingDocument.cacheKey);
         setFileKey(existingDocument.cacheKey);
-        const arrayBuffer = pdfFileHandler.getFileForPDF(existingDocument.cacheKey);
-        setPdfData(arrayBuffer);
-        return;
+        
+        try {
+          const stableData = pdfFileHandler.getStableFileData(existingDocument.cacheKey);
+          if (stableData) {
+            setPdfData(stableData);
+            return;
+          }
+        } catch (error) {
+          console.warn('⚠️ Existing cache key failed, reprocessing file');
+        }
       }
 
       setLoading(true);
@@ -60,13 +68,17 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
       try {
         console.log('🔄 Processing file for viewing:', file.name || 'uploaded-file.pdf');
         
-        // Process the file
+        // Process the file with enhanced buffer handling
         const cacheKey = await pdfFileHandler.processFile(file);
         setFileKey(cacheKey);
         
-        // Get ArrayBuffer for PDF viewing
-        const arrayBuffer = pdfFileHandler.getFileForPDF(cacheKey);
-        setPdfData(arrayBuffer);
+        // Get stable data for PDF viewing
+        const stableData = pdfFileHandler.getStableFileData(cacheKey);
+        if (!stableData) {
+          throw new Error('Failed to create stable file data');
+        }
+        
+        setPdfData(stableData);
         
         // Save cache key to document if we have a document ID
         if (documentId && updateDocumentCacheKey) {
@@ -74,9 +86,28 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
         }
         
         console.log('✅ File ready for viewing');
+        setRetryCount(0); // Reset retry count on success
         
       } catch (error) {
         console.error('❌ Error processing file:', error);
+        
+        // Check if we should retry for buffer detachment errors
+        if (PDFErrorHandler.shouldRetry(error) && retryCount < 3) {
+          console.log(`🔄 Retrying file processing (attempt ${retryCount + 1}/3)`);
+          setRetryCount(prev => prev + 1);
+          
+          // Clear any cached data and retry
+          if (fileKey) {
+            pdfFileHandler.removeFile(fileKey);
+          }
+          
+          setTimeout(() => {
+            processFileForViewing();
+          }, 1000 * (retryCount + 1)); // Exponential backoff
+          
+          return;
+        }
+        
         setError(PDFErrorHandler.getErrorMessage(error));
       } finally {
         setLoading(false);
@@ -84,7 +115,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     };
 
     processFileForViewing();
-  }, [file, existingDocument?.cacheKey, documentId, updateDocumentCacheKey]);
+  }, [file, retryCount]);
 
   // Initialize page number from existing document
   useEffect(() => {
@@ -94,12 +125,13 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     }
   }, [existingDocument]);
 
-  // PDF document load success
+  // PDF document load success with enhanced error handling
   const onDocumentLoadSuccess = useCallback(({ numPages }) => {
     console.log(`📄 PDF loaded successfully with ${numPages} pages`);
     setNumPages(numPages);
     setLoading(false);
     setError(null);
+    setRetryCount(0);
     
     // Update document with page count
     if (documentId) {
@@ -112,13 +144,53 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     }, 100);
   }, [documentId, pageNumber, updateDocumentProgress, startPageTimer, fileName]);
 
-  // PDF document load error
+  // Enhanced PDF document load error handling
   const onDocumentLoadError = useCallback((error) => {
     console.error('📄 PDF load error:', error);
+    
+    // Check if it's a buffer detachment error
+    if (PDFErrorHandler.shouldRetry(error) && retryCount < 3) {
+      console.log(`🔄 Retrying PDF load due to buffer error (attempt ${retryCount + 1}/3)`);
+      setRetryCount(prev => prev + 1);
+      
+      // Try to refresh the buffer
+      if (fileKey && file) {
+        pdfFileHandler.refreshBuffer(fileKey, file).then(() => {
+          const refreshedData = pdfFileHandler.getStableFileData(fileKey);
+          if (refreshedData) {
+            setPdfData(refreshedData);
+          }
+        });
+      }
+      
+      return;
+    }
+    
     setError(PDFErrorHandler.getErrorMessage(error));
     setLoading(false);
     stopPageTimer();
-  }, [stopPageTimer]);
+  }, [stopPageTimer, retryCount, fileKey, file]);
+
+  // Manual retry function
+  const handleRetry = () => {
+    if (file) {
+      setRetryCount(0);
+      setError(null);
+      
+      // Clear existing cache
+      if (fileKey) {
+        pdfFileHandler.removeFile(fileKey);
+        setFileKey(null);
+      }
+      
+      setPdfData(null);
+      
+      // Trigger reprocessing
+      setTimeout(() => {
+        setRetryCount(prev => prev + 1);
+      }, 100);
+    }
+  };
 
   // Handle page navigation with proper timer management
   const navigateToPage = useCallback((newPage) => {
@@ -234,6 +306,11 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
             </div>
           )}
+          {retryCount > 0 && (
+            <p className="text-yellow-600 text-sm mt-2">
+              Retry attempt {retryCount}/3...
+            </p>
+          )}
         </div>
       </div>
     );
@@ -247,17 +324,35 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
           <div className="flex-1">
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                <p className="text-red-800">{error}</p>
-                <p className="text-red-600 text-sm mt-1">
-                  Try refreshing the page or uploading a different PDF file.
-                </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-red-800 font-medium">PDF Loading Error</p>
+                    <p className="text-red-600 text-sm mt-1">{error}</p>
+                    {PDFErrorHandler.shouldRetry({message: error}) && (
+                      <p className="text-red-500 text-xs mt-2">
+                        This might be a temporary issue. Try refreshing the file.
+                      </p>
+                    )}
+                  </div>
+                  {PDFErrorHandler.shouldRetry({message: error}) && (
+                    <button
+                      onClick={handleRetry}
+                      className="flex items-center space-x-1 px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      <span>Retry</span>
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
             {loading && (
               <div className="text-center py-12">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                <p className="text-gray-600 mt-2">Loading PDF...</p>
+                <p className="text-gray-600 mt-2">
+                  {retryCount > 0 ? `Retrying... (${retryCount}/3)` : 'Loading PDF...'}
+                </p>
               </div>
             )}
 
@@ -399,17 +494,29 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
                     options={{
                       disableTextLayer: true,
                       disableAnnotationLayer: true,
+                      cMapUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/cmaps/',
+                      cMapPacked: true,
                     }}
                     loading={
                       <div className="text-center py-12">
                         <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                         <p className="text-gray-600 mt-2">Loading PDF document...</p>
+                        {retryCount > 0 && (
+                          <p className="text-yellow-600 text-sm">Retry {retryCount}/3</p>
+                        )}
                       </div>
                     }
                     error={
                       <div className="text-center py-12">
                         <div className="text-red-600 mb-2">❌ Failed to load PDF</div>
-                        <p className="text-gray-600 text-sm">Please try refreshing or uploading a different file</p>
+                        <p className="text-gray-600 text-sm mb-4">Please try refreshing or uploading a different file</p>
+                        <button
+                          onClick={handleRetry}
+                          className="flex items-center space-x-1 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors mx-auto"
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          <span>Retry Loading</span>
+                        </button>
                       </div>
                     }
                     className="react-pdf__Document"
