@@ -1,3 +1,4 @@
+import SimplePDFUpload from './SimplePDFUpload';
 import React, { useState, useRef } from 'react';
 import { Upload, FolderPlus, X, FileText, AlertCircle, CheckCircle, Plus } from 'lucide-react';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';

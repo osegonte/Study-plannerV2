@@ -4,7 +4,7 @@ import { StudyPlannerProvider } from './contexts/StudyPlannerContext';
 import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import UserOnboarding from './components/auth/UserOnboarding';
 import EnhancedPDFUpload from './components/upload/EnhancedPDFUpload';
-import RealPDFViewer from './components/pdf/RealPDFViewer';
+import RealContentPDFViewer from './components/pdf/RealContentPDFViewer';
 import EnhancedTopicManager from './components/topics/EnhancedTopicManager';
 import EnhancedAnalyticsDashboard from './components/analytics/EnhancedAnalyticsDashboard';
 import { FileText, FolderPlus, Upload, BarChart3, Home, User, LogOut } from 'lucide-react';
@@ -306,7 +306,7 @@ const AppContent = () => {
         {currentView === 'analytics' && <EnhancedAnalyticsDashboard />}
         
         {currentView === 'viewer' && selectedDocument && (
-          <RealPDFViewer
+          <RealContentPDFViewer
             documentId={selectedDocument.id}
             fileName={selectedDocument.name}
             onBack={handleBackFromViewer}
