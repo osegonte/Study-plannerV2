@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { StudyPlannerProvider } from './contexts/StudyPlannerContext';
-import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import UserOnboarding from './components/auth/UserOnboarding';
 import EnhancedPDFUpload from './components/upload/EnhancedPDFUpload';
 import RealPDFViewer from './components/pdf/RealPDFViewer';
 import EnhancedTopicManager from './components/topics/EnhancedTopicManager';
 import EnhancedAnalyticsDashboard from './components/analytics/EnhancedAnalyticsDashboard';
+import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import { FileText, FolderPlus, Upload, BarChart3, Home, User, LogOut } from 'lucide-react';
 import './styles/globals.css';
-import './utils/testData.js';
 
 const AppContent = () => {
   // Safe destructuring with fallbacks
@@ -328,3 +327,6 @@ function App() {
 }
 
 export default App;
+
+// Ensure test data functions are available globally
+import './utils/testData.js';

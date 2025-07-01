@@ -1,37 +1,27 @@
 import React, { useState } from 'react';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { StudyPlannerProvider } from './contexts/StudyPlannerContext';
-import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import UserOnboarding from './components/auth/UserOnboarding';
 import EnhancedPDFUpload from './components/upload/EnhancedPDFUpload';
-import RealPDFViewer from './components/pdf/RealPDFViewer';
+import EnhancedPDFViewer from './components/pdf/EnhancedPDFViewer';
 import EnhancedTopicManager from './components/topics/EnhancedTopicManager';
 import EnhancedAnalyticsDashboard from './components/analytics/EnhancedAnalyticsDashboard';
+import { useStudyPlanner } from './contexts/StudyPlannerContext';
 import { FileText, FolderPlus, Upload, BarChart3, Home, User, LogOut } from 'lucide-react';
 import './styles/globals.css';
-import './utils/testData.js';
 
 const AppContent = () => {
-  // Safe destructuring with fallbacks
-  const userContext = useUser();
-  const { 
-    currentUser = {}, 
-    userProfile = {}, 
-    isAuthenticated = false, 
-    createAccount = () => {}, 
-    logout = () => {} 
-  } = userContext || {};
-
+  const { currentUser, userProfile, isAuthenticated, createAccount, logout } = useUser();
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedDocument, setSelectedDocument] = useState(null);
 
   const {
-    topics = [],
-    documents = [],
-    createTopic = () => {},
-    updateTopic = () => {},
-    deleteTopic = () => {}
-  } = useStudyPlanner() || {};
+    topics,
+    documents,
+    createTopic,
+    updateTopic,
+    deleteTopic
+  } = useStudyPlanner();
 
   if (!isAuthenticated) {
     return <UserOnboarding onComplete={createAccount} />;
@@ -45,22 +35,14 @@ const AppContent = () => {
   ];
 
   const handleStartReading = (document) => {
-    if (document && document.id) {
-      setSelectedDocument(document);
-      setCurrentView('viewer');
-    }
+    setSelectedDocument(document);
+    setCurrentView('viewer');
   };
 
   const handleBackFromViewer = () => {
     setCurrentView('dashboard');
     setSelectedDocument(null);
   };
-
-  // Safe profile access with fallbacks
-  const displayName = userProfile?.displayName || 
-                      currentUser?.profile?.displayName || 
-                      currentUser?.username || 
-                      'Demo User';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -76,7 +58,7 @@ const AppContent = () => {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <User className="h-4 w-4" />
-                <span className="text-gray-700">{displayName}</span>
+                <span className="text-gray-700">{userProfile?.displayName || currentUser?.username}</span>
               </div>
               <button 
                 onClick={logout} 
@@ -126,7 +108,7 @@ const AppContent = () => {
             {/* Welcome Section */}
             <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg p-6">
               <h2 className="text-2xl font-bold mb-2">
-                Welcome back, {displayName}! 👋
+                Welcome back, {userProfile?.displayName || currentUser?.username}! 👋
               </h2>
               <p className="text-blue-100">Track your reading progress and stay organized with your study materials.</p>
             </div>
@@ -243,39 +225,6 @@ const AppContent = () => {
                 </div>
               </div>
             )}
-
-            {/* Test Data Section */}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-yellow-800 mb-3">🧪 Testing Tools</h3>
-              <p className="text-yellow-700 mb-4">Use these tools to test the app functionality with sample data.</p>
-              <div className="flex space-x-3">
-                <button
-                  onClick={() => {
-                    if (window.injectTestData) {
-                      window.injectTestData();
-                    } else {
-                      console.log('Test data function not available');
-                    }
-                  }}
-                  className="bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700 transition-colors"
-                >
-                  Load Test Data
-                </button>
-                <button
-                  onClick={() => {
-                    if (window.clearTestData) {
-                      window.clearTestData();
-                    } else {
-                      localStorage.clear();
-                      window.location.reload();
-                    }
-                  }}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  Clear All Data
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
@@ -306,7 +255,7 @@ const AppContent = () => {
         {currentView === 'analytics' && <EnhancedAnalyticsDashboard />}
         
         {currentView === 'viewer' && selectedDocument && (
-          <RealPDFViewer
+          <EnhancedPDFViewer
             documentId={selectedDocument.id}
             fileName={selectedDocument.name}
             onBack={handleBackFromViewer}
@@ -328,3 +277,6 @@ function App() {
 }
 
 export default App;
+
+// Ensure test data functions are available globally
+import './utils/testData.js';
