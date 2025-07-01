@@ -1,3 +1,37 @@
+#!/bin/bash
+# update-components.sh - Update components with enhanced versions
+
+echo "🔄 Updating Components with Enhanced Versions"
+echo "=============================================="
+
+# Colors for output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_instruction() {
+    echo -e "${YELLOW}[INSTRUCTION]${NC} $1"
+}
+
+# Check if we're in the right directory
+if [ ! -d "frontend/src" ]; then
+    echo "❌ Please run this script from the project root directory"
+    exit 1
+fi
+
+print_status "Updating App.jsx with working version..."
+
+# Create a working App.jsx that imports the placeholder components correctly
+cat > frontend/src/App.jsx << 'EOF'
 import React, { useState, useEffect } from 'react';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { StudyPlannerProvider } from './contexts/StudyPlannerContext';
@@ -321,3 +355,84 @@ function App() {
 }
 
 export default App;
+EOF
+
+print_success "App.jsx updated with working imports"
+
+print_status "Creating instructions file..."
+cat > COMPONENT_REPLACEMENT_GUIDE.md << 'EOF'
+# Component Replacement Guide
+
+## 🎯 Current Status
+Your app is now running with placeholder components. Follow these steps to get the full enhanced functionality:
+
+## 📁 Files to Replace
+
+### 1. Enhanced PDF Viewer
+**File:** `frontend/src/components/pdf/EnhancedPDFViewer.jsx`
+**Current:** Placeholder showing instructions
+**Replace with:** Enhanced PDF Viewer artifact from Claude
+**Features:** Resume reading, enhanced timer, progress tracking
+
+### 2. Enhanced Topic Manager  
+**File:** `frontend/src/components/topics/EnhancedTopicManager.jsx`
+**Current:** Placeholder showing instructions
+**Replace with:** Enhanced Topic Manager artifact from Claude
+**Features:** Color circles, direct upload, expandable cards
+
+### 3. Enhanced App Component (Optional - for full features)
+**File:** `frontend/src/App.jsx`
+**Current:** Working basic version
+**Replace with:** Enhanced App artifact from Claude
+**Features:** PDF storage system, resume functionality
+
+## 🚀 How to Replace
+
+1. Copy the content from the Enhanced PDF Viewer artifact
+2. Paste it into `frontend/src/components/pdf/EnhancedPDFViewer.jsx`
+3. Copy the content from the Enhanced Topic Manager artifact  
+4. Paste it into `frontend/src/components/topics/EnhancedTopicManager.jsx`
+5. Save the files and the app will hot-reload
+
+## 🎉 What You'll Get
+
+After replacing the components:
+- ✅ Color circle topic selection
+- ✅ Direct PDF upload from topics
+- ✅ Resume reading from where you left off
+- ✅ Enhanced time tracking and estimates
+- ✅ Beautiful progress indicators
+- ✅ Expandable topic cards
+
+## 🔧 Current Working Features
+
+Even with placeholders, you can:
+- Create topics
+- Upload PDFs (basic)
+- View analytics
+- Navigate between sections
+
+Replace the components for the full enhanced experience!
+EOF
+
+print_success "Component replacement guide created"
+
+echo ""
+echo "🎉 App Updated Successfully!"
+echo "==========================="
+echo "✅ App.jsx updated with working imports"
+echo "✅ All placeholder components are functional"
+echo "✅ Created replacement guide"
+echo ""
+echo "🚀 Your app should now compile and run!"
+echo ""
+print_instruction "NEXT STEPS:"
+echo "1. Check that the app is running at http://localhost:3000"
+echo "2. You'll see placeholder messages in the PDF viewer and topic manager"
+echo "3. Replace the placeholder components with enhanced versions:"
+echo "   📁 frontend/src/components/pdf/EnhancedPDFViewer.jsx"
+echo "   📁 frontend/src/components/topics/EnhancedTopicManager.jsx"
+echo ""
+echo "📖 See COMPONENT_REPLACEMENT_GUIDE.md for detailed instructions"
+echo ""
+print_success "Ready to enhance! 🎉"
