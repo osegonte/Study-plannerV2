@@ -1,15 +1,9 @@
 import React from 'react';
-import { BarChart3, Clock, TrendingUp, BookOpen } from 'lucide-react';
+import { BarChart3, Clock, TrendingUp, BookOpen, Target, Zap } from 'lucide-react';
 import { useStudyPlanner } from '../../contexts/StudyPlannerContext';
 
 const EnhancedAnalyticsDashboard = () => {
   const { topics, documents } = useStudyPlanner();
-
-  const totalPages = documents.reduce((sum, doc) => sum + (doc.totalPages || 0), 0);
-  const pagesRead = documents.reduce((sum, doc) => sum + Object.keys(doc.pageTimes || {}).length, 0);
-  const totalTime = documents.reduce((sum, doc) => {
-    return sum + Object.values(doc.pageTimes || {}).reduce((docSum, time) => docSum + time, 0);
-  }, 0);
 
   const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
@@ -20,7 +14,100 @@ const EnhancedAnalyticsDashboard = () => {
     return `${minutes}m`;
   };
 
-  const avgReadingSpeed = totalTime > 0 && pagesRead > 0 ? (pagesRead * 3600) / totalTime : 0;
+  const formatDetailedTime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${secs}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    }
+    return `${secs}s`;
+  };
+
+  // Calculate comprehensive statistics
+  const stats = React.useMemo(() => {
+    const totalPages = documents.reduce((sum, doc) => sum + (doc.totalPages || 0), 0);
+    const pagesRead = documents.reduce((sum, doc) => sum + Object.keys(doc.pageTimes || {}).length, 0);
+    const totalTime = documents.reduce((sum, doc) => {
+      return sum + Object.values(doc.pageTimes || {}).reduce((docSum, time) => docSum + time, 0);
+    }, 0);
+
+    // Calculate reading speed (pages per hour)
+    const avgReadingSpeed = totalTime > 0 && pagesRead > 0 ? (pagesRead * 3600) / totalTime : 0;
+
+    // Calculate estimated time remaining across all documents
+    const totalEstimatedRemaining = documents.reduce((sum, doc) => {
+      const pageTimes = doc.pageTimes || {};
+      const docPagesRead = Object.keys(pageTimes).length;
+      
+      if (docPagesRead === 0) return sum;
+      
+      const avgTimePerPage = Object.values(pageTimes).reduce((total, time) => total + time, 0) / docPagesRead;
+      const pagesRemaining = Math.max((doc.totalPages || 0) - (doc.currentPage || 0), 0);
+      
+      return sum + (avgTimePerPage * pagesRemaining);
+    }, 0);
+
+    // Document completion stats
+    const completedDocuments = documents.filter(doc => {
+      const progress = doc.totalPages > 0 ? (doc.currentPage / doc.totalPages) * 100 : 0;
+      return progress >= 100;
+    }).length;
+
+    const documentsInProgress = documents.filter(doc => {
+      const progress = doc.totalPages > 0 ? (doc.currentPage / doc.totalPages) * 100 : 0;
+      return progress > 0 && progress < 100;
+    }).length;
+
+    // Topic-specific stats
+    const topicStats = topics.map(topic => {
+      const topicDocs = documents.filter(doc => doc.topicId === topic.id);
+      const topicTotalTime = topicDocs.reduce((sum, doc) => {
+        return sum + Object.values(doc.pageTimes || {}).reduce((docSum, time) => docSum + time, 0);
+      }, 0);
+      
+      const topicPagesRead = topicDocs.reduce((sum, doc) => sum + Object.keys(doc.pageTimes || {}).length, 0);
+      const topicTotalPages = topicDocs.reduce((sum, doc) => sum + (doc.totalPages || 0), 0);
+      
+      return {
+        ...topic,
+        documentsCount: topicDocs.length,
+        totalTime: topicTotalTime,
+        pagesRead: topicPagesRead,
+        totalPages: topicTotalPages,
+        completionRate: topicTotalPages > 0 ? (topicPagesRead / topicTotalPages) * 100 : 0
+      };
+    }).sort((a, b) => b.totalTime - a.totalTime);
+
+    return {
+      totalPages,
+      pagesRead,
+      totalTime,
+      avgReadingSpeed,
+      totalEstimatedRemaining,
+      completedDocuments,
+      documentsInProgress,
+      topicStats,
+      overallProgress: totalPages > 0 ? (pagesRead / totalPages) * 100 : 0
+    };
+  }, [topics, documents]);
+
+  const getTopicColorInfo = (colorName) => {
+    const colorMap = {
+      blue: '#3B82F6',
+      green: '#10B981',
+      purple: '#8B5CF6',
+      orange: '#F59E0B',
+      pink: '#EC4899',
+      indigo: '#6366F1',
+      yellow: '#EAB308',
+      red: '#EF4444'
+    };
+    return colorMap[colorName] || colorMap.blue;
+  };
 
   return (
     <div className="space-y-6">
@@ -35,9 +122,12 @@ const EnhancedAnalyticsDashboard = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">Total Study Time</p>
-              <p className="text-2xl font-bold text-blue-600">{formatTime(totalTime)}</p>
+              <p className="text-2xl font-bold text-blue-600">{formatTime(stats.totalTime)}</p>
             </div>
             <Clock className="h-8 w-8 text-blue-600" />
+          </div>
+          <div className="mt-2 text-sm text-gray-500">
+            Across {documents.length} documents
           </div>
         </div>
 
@@ -45,12 +135,12 @@ const EnhancedAnalyticsDashboard = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">Pages Read</p>
-              <p className="text-2xl font-bold text-green-600">{pagesRead}</p>
+              <p className="text-2xl font-bold text-green-600">{stats.pagesRead}</p>
             </div>
             <BookOpen className="h-8 w-8 text-green-600" />
           </div>
           <div className="mt-2 text-sm text-gray-500">
-            of {totalPages} total pages
+            of {stats.totalPages} total pages
           </div>
         </div>
 
@@ -59,134 +149,173 @@ const EnhancedAnalyticsDashboard = () => {
             <div>
               <p className="text-sm text-gray-600">Reading Speed</p>
               <p className="text-2xl font-bold text-purple-600">
-                {avgReadingSpeed > 0 ? avgReadingSpeed.toFixed(1) : '0'} p/h
+                {stats.avgReadingSpeed > 0 ? stats.avgReadingSpeed.toFixed(1) : '0'} p/h
               </p>
             </div>
             <TrendingUp className="h-8 w-8 text-purple-600" />
+          </div>
+          <div className="mt-2 text-sm text-gray-500">
+            Pages per hour average
           </div>
         </div>
 
         <div className="bg-white border rounded-lg p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Progress</p>
+              <p className="text-sm text-gray-600">Time Remaining</p>
               <p className="text-2xl font-bold text-orange-600">
-                {totalPages > 0 ? Math.round((pagesRead / totalPages) * 100) : 0}%
+                {formatTime(stats.totalEstimatedRemaining)}
               </p>
             </div>
-            <BarChart3 className="h-8 w-8 text-orange-600" />
+            <Target className="h-8 w-8 text-orange-600" />
+          </div>
+          <div className="mt-2 text-sm text-gray-500">
+            Estimated to finish all
           </div>
         </div>
       </div>
 
-      {/* Study Summary */}
+      {/* Progress Overview */}
       <div className="bg-white border rounded-lg p-6 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Study Summary</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Overall Progress</h3>
         
-        {documents.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <BookOpen className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-            <p>Upload PDFs and start reading to see your analytics!</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div className="text-center">
+            <div className="text-3xl font-bold text-blue-600">{stats.completedDocuments}</div>
+            <div className="text-sm text-gray-600">Completed Documents</div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-bold text-gray-900">{documents.length}</div>
-                <div className="text-sm text-gray-600">Documents</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-gray-900">{topics.length}</div>
-                <div className="text-sm text-gray-600">Topics</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-gray-900">{pagesRead}</div>
-                <div className="text-sm text-gray-600">Pages Read</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-gray-900">
-                  {totalPages > 0 ? Math.round((pagesRead / totalPages) * 100) : 0}%
-                </div>
-                <div className="text-sm text-gray-600">Completion</div>
-              </div>
-            </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold text-orange-600">{stats.documentsInProgress}</div>
+            <div className="text-sm text-gray-600">In Progress</div>
           </div>
-        )}
+          <div className="text-center">
+            <div className="text-3xl font-bold text-gray-600">{documents.length - stats.completedDocuments - stats.documentsInProgress}</div>
+            <div className="text-sm text-gray-600">Not Started</div>
+          </div>
+        </div>
+
+        {/* Overall Progress Bar */}
+        <div className="mb-4">
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-gray-600">Overall Reading Progress</span>
+            <span className="font-medium">{stats.overallProgress.toFixed(1)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-3">
+            <div
+              className="bg-blue-600 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${Math.min(stats.overallProgress, 100)}%` }}
+            ></div>
+          </div>
+        </div>
       </div>
 
-      {/* Recent Activity */}
-      <div className="bg-white border rounded-lg p-6 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
-        
-        {documents.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <p>No recent activity. Start reading to see your progress!</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {documents.slice(0, 5).map((doc) => {
-              const topic = topics.find(t => t.id === doc.topicId);
-              const docTime = Object.values(doc.pageTimes || {}).reduce((sum, time) => sum + time, 0);
-              const pagesWithTime = Object.keys(doc.pageTimes || {}).length;
-              
-              return (
-                <div key={doc.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                  <div>
-                    <div className="font-medium text-gray-900">{doc.name}</div>
-                    <div className="text-sm text-gray-500">
-                      {topic?.name || 'Unknown Topic'} • {pagesWithTime} pages read
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium">{formatTime(docTime)}</div>
-                    <div className="text-xs text-gray-500">
-                      {doc.lastReadAt ? new Date(doc.lastReadAt).toLocaleDateString() : 'Never'}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Reading Estimates */}
-      {pagesRead >= 2 && (
+      {/* Topic Performance */}
+      {stats.topicStats.length > 0 && (
         <div className="bg-white border rounded-lg p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Reading Estimates</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Topic Performance</h3>
           
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-              <div>
-                <div className="text-lg font-bold text-blue-900">
-                  {avgReadingSpeed.toFixed(1)} pages/hour
+          <div className="space-y-4">
+            {stats.topicStats.map((topic) => (
+              <div key={topic.id} className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-3">
+                    <div 
+                      className="w-4 h-4 rounded-full"
+                      style={{ backgroundColor: getTopicColorInfo(topic.color) }}
+                    ></div>
+                    <h4 className="font-medium text-gray-900">{topic.name}</h4>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {topic.documentsCount} document{topic.documentsCount !== 1 ? 's' : ''}
+                  </div>
                 </div>
-                <div className="text-sm text-blue-700">Your Reading Speed</div>
-              </div>
-              
-              <div>
-                <div className="text-lg font-bold text-blue-900">
-                  {formatTime((totalPages - pagesRead) * (totalTime / pagesRead))}
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <div className="font-medium text-gray-900">{formatTime(topic.totalTime)}</div>
+                    <div className="text-gray-600">Time Spent</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900">{topic.pagesRead}</div>
+                    <div className="text-gray-600">Pages Read</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900">{topic.totalPages}</div>
+                    <div className="text-gray-600">Total Pages</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900">{topic.completionRate.toFixed(1)}%</div>
+                    <div className="text-gray-600">Complete</div>
+                  </div>
                 </div>
-                <div className="text-sm text-blue-700">Estimated Time Remaining</div>
-              </div>
-              
-              <div>
-                <div className="text-lg font-bold text-blue-900">
-                  {Math.round(((totalPages - pagesRead) / avgReadingSpeed) * 24)} days
+                
+                <div className="mt-3">
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="h-2 rounded-full transition-all duration-300"
+                      style={{ 
+                        width: `${Math.min(topic.completionRate, 100)}%`,
+                        backgroundColor: getTopicColorInfo(topic.color)
+                      }}
+                    ></div>
+                  </div>
                 </div>
-                <div className="text-sm text-blue-700">Days to Complete (1h/day)</div>
               </div>
-            </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent Documents */}
+      {documents.length > 0 && (
+        <div className="bg-white border rounded-lg p-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Documents</h3>
+          
+          <div className="space-y-3">
+            {documents
+              .sort((a, b) => new Date(b.lastReadAt) - new Date(a.lastReadAt))
+              .slice(0, 5)
+              .map((doc) => {
+                const topic = topics.find(t => t.id === doc.topicId);
+                const docTime = Object.values(doc.pageTimes || {}).reduce((sum, time) => sum + time, 0);
+                const progress = doc.totalPages > 0 ? (doc.currentPage / doc.totalPages) * 100 : 0;
+                const pagesRead = Object.keys(doc.pageTimes || {}).length;
+                
+                return (
+                  <div key={doc.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-b-0">
+                    <div className="flex items-center space-x-3">
+                      <div 
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: getTopicColorInfo(topic?.color || 'blue') }}
+                      ></div>
+                      <div>
+                        <div className="font-medium text-gray-900">{doc.name}</div>
+                        <div className="text-sm text-gray-500">
+                          {topic?.name || 'Unknown Topic'} • {pagesRead} pages read
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-medium">{progress.toFixed(1)}% complete</div>
+                      <div className="text-xs text-gray-500">
+                        {formatDetailedTime(docTime)} • Last read {new Date(doc.lastReadAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}
 
       {/* Getting Started */}
-      {pagesRead === 0 && (
+      {documents.length === 0 && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-yellow-800 mb-2">Get Started with Analytics</h3>
-          <p className="text-yellow-700 text-sm">
+          <div className="flex items-center space-x-3">
+            <Zap className="h-6 w-6 text-yellow-600" />
+            <h3 className="text-lg font-semibold text-yellow-800">Get Started with Analytics</h3>
+          </div>
+          <p className="text-yellow-700 text-sm mt-2">
             Upload PDFs and start reading to unlock detailed analytics, reading speed calculations, 
             and time estimates. Your study patterns will help predict completion times and optimize your schedule.
           </p>

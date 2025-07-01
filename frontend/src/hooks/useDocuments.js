@@ -65,11 +65,19 @@ export const useDocuments = () => {
       size: documentData.size,
       topicId: documentData.topicId,
       totalPages: documentData.totalPages || 0,
-      currentPage: 1,
-      pageTimes: {},
+      currentPage: documentData.currentPage || 1,
+      pageTimes: documentData.pageTimes || {},
       cacheKey: documentData.cacheKey || null,
       uploadedAt: new Date().toISOString(),
-      lastReadAt: new Date().toISOString()
+      lastReadAt: new Date().toISOString(),
+      // Enhanced progress tracking
+      readingProgress: {
+        percentage: 0,
+        timeSpent: 0,
+        averageTimePerPage: 0,
+        estimatedTimeRemaining: 0,
+        lastUpdated: new Date().toISOString()
+      }
     };
 
     setDocuments(prev => [...prev, newDocument]);
@@ -79,7 +87,16 @@ export const useDocuments = () => {
   const updateDocument = (documentId, updates) => {
     setDocuments(prev => prev.map(doc =>
       doc.id === documentId
-        ? { ...doc, ...updates, lastReadAt: new Date().toISOString() }
+        ? { 
+            ...doc, 
+            ...updates, 
+            lastReadAt: new Date().toISOString(),
+            readingProgress: {
+              ...doc.readingProgress,
+              ...updates.readingProgress,
+              lastUpdated: new Date().toISOString()
+            }
+          }
         : doc
     ));
   };
@@ -97,24 +114,60 @@ export const useDocuments = () => {
   };
 
   const updateDocumentPageTimes = (documentId, pageTimes) => {
-    setDocuments(prev => prev.map(doc =>
-      doc.id === documentId
-        ? { ...doc, pageTimes, lastReadAt: new Date().toISOString() }
-        : doc
-    ));
+    const pagesRead = Object.keys(pageTimes).length;
+    const timeSpent = Object.values(pageTimes).reduce((sum, time) => sum + time, 0);
+    const averageTimePerPage = pagesRead > 0 ? timeSpent / pagesRead : 0;
+    
+    setDocuments(prev => prev.map(doc => {
+      if (doc.id === documentId) {
+        const totalPages = doc.totalPages || 1;
+        const percentage = (pagesRead / totalPages) * 100;
+        const pagesRemaining = Math.max(totalPages - pagesRead, 0);
+        const estimatedTimeRemaining = averageTimePerPage * pagesRemaining;
+        
+        return {
+          ...doc, 
+          pageTimes, 
+          lastReadAt: new Date().toISOString(),
+          readingProgress: {
+            percentage: Math.min(percentage, 100),
+            timeSpent,
+            averageTimePerPage,
+            estimatedTimeRemaining,
+            lastUpdated: new Date().toISOString()
+          }
+        };
+      }
+      return doc;
+    }));
   };
 
   const updateDocumentProgress = (documentId, currentPage, totalPages) => {
-    setDocuments(prev => prev.map(doc =>
-      doc.id === documentId
-        ? { 
-            ...doc, 
-            currentPage, 
-            totalPages,
-            lastReadAt: new Date().toISOString()
+    setDocuments(prev => prev.map(doc => {
+      if (doc.id === documentId) {
+        const percentage = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
+        const pagesRead = Object.keys(doc.pageTimes || {}).length;
+        const timeSpent = Object.values(doc.pageTimes || {}).reduce((sum, time) => sum + time, 0);
+        const averageTimePerPage = pagesRead > 0 ? timeSpent / pagesRead : 0;
+        const pagesRemaining = Math.max(totalPages - currentPage, 0);
+        const estimatedTimeRemaining = averageTimePerPage * pagesRemaining;
+        
+        return { 
+          ...doc, 
+          currentPage, 
+          totalPages,
+          lastReadAt: new Date().toISOString(),
+          readingProgress: {
+            percentage: Math.min(percentage, 100),
+            timeSpent,
+            averageTimePerPage,
+            estimatedTimeRemaining,
+            lastUpdated: new Date().toISOString()
           }
-        : doc
-    ));
+        };
+      }
+      return doc;
+    }));
   };
 
   const updateDocumentCacheKey = (documentId, cacheKey) => {
@@ -123,6 +176,27 @@ export const useDocuments = () => {
         ? { ...doc, cacheKey, lastReadAt: new Date().toISOString() }
         : doc
     ));
+  };
+
+  // Get reading statistics for a document
+  const getDocumentStats = (documentId) => {
+    const doc = getDocumentById(documentId);
+    if (!doc) return null;
+
+    const pageTimes = doc.pageTimes || {};
+    const pagesRead = Object.keys(pageTimes).length;
+    const timeSpent = Object.values(pageTimes).reduce((sum, time) => sum + time, 0);
+    
+    return {
+      pagesRead,
+      totalPages: doc.totalPages || 0,
+      timeSpent,
+      averageTimePerPage: pagesRead > 0 ? timeSpent / pagesRead : 0,
+      percentage: doc.readingProgress?.percentage || 0,
+      estimatedTimeRemaining: doc.readingProgress?.estimatedTimeRemaining || 0,
+      canResume: doc.currentPage > 1,
+      lastReadAt: doc.lastReadAt
+    };
   };
 
   return {
@@ -134,6 +208,7 @@ export const useDocuments = () => {
     getDocumentsByTopic,
     updateDocumentPageTimes,
     updateDocumentProgress,
-    updateDocumentCacheKey
+    updateDocumentCacheKey,
+    getDocumentStats
   };
 };

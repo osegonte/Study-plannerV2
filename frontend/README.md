@@ -2,84 +2,135 @@
 
 A React-based application for tracking reading time and managing study sessions with PDF documents.
 
-## Project Stages
+## Features
 
-- [x] **Stage 1**: PDF Viewer Core ✅
-- [x] **Stage 2**: Reading Time Tracking ✅  
-- [x] **Stage 3**: Estimated Reading Time ✅
-- [ ] **Stage 4**: Topic Organization  
-- [ ] **Stage 5**: Dashboard & Analytics
-
-## Stage 3 Features ✅
-
-### 📈 Reading Speed Analysis
-- **Personal Reading Speed**: Calculate pages per hour based on your actual reading
-- **Average vs Median**: Smart calculation using median for better accuracy with outliers
-- **Confidence Levels**: Low/Medium/High/Very High confidence based on data quality
-- **Adaptive Estimates**: More accurate predictions as you read more pages
-
-### ⏰ Completion Estimates
-- **Total Document Time**: Estimate how long the entire PDF will take
-- **Remaining Time**: Time needed to finish from current page
-- **Finish By Time**: Predicted completion time (e.g., "Finish by 3:45 PM")
-- **Progress Visualization**: Visual progress bar with percentage complete
-
-### 🎯 Smart Predictions
-- **Data-Driven**: Uses your actual reading patterns, not generic estimates
-- **Outlier Detection**: Handles unusually fast/slow pages intelligently
-- **Confidence Scoring**: Tells you how reliable the estimates are
-- **Real-Time Updates**: Estimates improve as you read more pages
-
-### 📊 Advanced Analytics
-- **Reading Speed Indicator**: Live speed display in toolbar
-- **Fastest/Slowest Pages**: Identify which pages took longest/shortest time
-- **Data Coverage**: Shows how much of the document contributes to estimates
-- **Detailed Breakdowns**: Multiple time formats for different contexts
-
-## Complete Feature Set (Stages 1-3) ✅
-
-### PDF Viewing
-- Real PDF rendering with react-pdf
-- Page navigation (previous/next/jump to page)
-- Zoom controls (50% to 300%)  
+### 📚 PDF Document Management
+- Upload and organize PDF study materials
+- Topic-based organization system
 - Progress tracking with visual indicators
-- File upload with validation
-- Comprehensive error handling
+- File validation and error handling
 
-### Time Tracking
+### ⏱️ Reading Time Tracking
 - Automatic page-by-page timing
 - Real-time timer display with pause/resume
 - Session statistics and analytics
 - Smart pause when switching browser tabs
 - Historical data for all pages visited
 
-### Reading Estimates
-- Personalized reading speed calculation
+### 📈 Reading Analytics
+- Personal reading speed calculation
 - Document completion time estimates
 - Real-time remaining time predictions
 - Confidence-based estimate reliability
-- Smart outlier handling for accuracy
+- Progress visualization with detailed breakdowns
+
+### 🎯 Study Organization
+- Create and manage study topics
+- Color-coded topic system
+- Document categorization
+- Progress tracking across multiple PDFs
+
+## Getting Started
+
+### Prerequisites
+- Node.js (version 14 or higher)
+- npm or yarn package manager
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd pdf-study-planner
+   ```
+
+2. **Install dependencies**
+   ```bash
+   # Install frontend dependencies
+   cd frontend
+   npm install
+   
+   # Install backend dependencies
+   cd ../backend
+   npm install
+   ```
+
+3. **Start the development servers**
+   ```bash
+   # From the project root
+   ./start-dev.sh
+   ```
+   
+   Or manually:
+   ```bash
+   # Terminal 1 - Backend
+   cd backend
+   npm start
+   
+   # Terminal 2 - Frontend
+   cd frontend
+   npm start
+   ```
+
+4. **Open the application**
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:3001
 
 ## Usage
 
-1. **Upload a PDF**: Click "Upload PDF" and select your study material
-2. **Start Reading**: Timer automatically starts, estimates begin after page 2
-3. **Watch Estimates Improve**: Reading speed and completion predictions get more accurate
-4. **Check Your Pace**: View reading speed in toolbar and detailed estimates in sidebar
-5. **Plan Your Time**: See estimated finish time and remaining time to plan study sessions
+### Getting Started
+1. **Create Account**: Set up your user profile when first launching the app
+2. **Create Topics**: Organize your study materials by creating topics (e.g., Mathematics, Physics)
+3. **Upload PDFs**: Upload your study materials to the appropriate topics
+4. **Start Reading**: Open PDFs and let the app track your reading time automatically
+5. **View Analytics**: Check your progress, reading speed, and completion estimates
+
+### Key Features
+
+#### PDF Reading
+- **Timer**: Automatically tracks time spent on each page
+- **Navigation**: Easy page navigation with progress tracking
+- **Zoom**: Adjust zoom level for comfortable reading
+- **Progress**: Visual progress bar showing completion percentage
+
+#### Analytics
+- **Reading Speed**: Personal reading speed in pages per hour
+- **Estimates**: Completion time predictions based on your reading patterns
+- **Confidence Levels**: Estimate reliability improves with more data
+- **Progress Tracking**: Visual representation of study progress
+
+#### Organization
+- **Topics**: Group related documents together
+- **Search**: Find documents quickly
+- **Progress Overview**: See completion status across all materials
 
 ## Technical Features
 
-- **Smart Calculations**: Uses both average and median for robust estimates
-- **Confidence Scoring**: Estimates improve from "Low" to "Very High" confidence
-- **Real-time Updates**: All estimates update live as you read
-- **Data Persistence**: Timing data maintained throughout session
+- **PDF Rendering**: Uses react-pdf for high-quality document display
 - **Responsive Design**: Works on desktop and tablet devices
+- **Data Persistence**: Local storage with automatic backups
+- **Error Handling**: Comprehensive error handling and recovery
+- **Performance**: Optimized for large PDF files
 
-## Next Steps
+## Browser Support
 
-Ready for **Stage 4: Topic Organization** which will add:
-- PDF categorization by subject/topic
-- Topic-based reading time estimates  
-- Study session organization
-- Multi-document progress tracking
+- Chrome/Chromium (recommended)
+- Firefox
+- Safari
+- Edge
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+If you encounter any issues or have questions, please create an issue in the repository.

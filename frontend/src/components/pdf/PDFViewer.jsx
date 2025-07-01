@@ -8,7 +8,7 @@ import TimeTrackingStats from '../timer/TimeTrackingStats';
 import ReadingEstimates from '../timer/ReadingEstimates';
 import ReadingSpeedIndicator from '../timer/ReadingSpeedIndicator';
 
-// Enhanced worker configuration with fallback
+// Worker configuration
 const configureWorker = () => {
   const workerUrls = [
     '/pdf.worker.min.js',
@@ -19,10 +19,9 @@ const configureWorker = () => {
   for (const url of workerUrls) {
     try {
       pdfjs.GlobalWorkerOptions.workerSrc = url;
-      console.log('🔧 PDF Worker configured:', url);
       break;
     } catch (error) {
-      console.warn('⚠️ Worker URL failed:', url, error);
+      console.warn('Worker URL failed:', url);
     }
   }
 };
@@ -37,7 +36,6 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isPageChanging, setIsPageChanging] = useState(false);
-  const [processingMethod, setProcessingMethod] = useState('');
   const [retryCount, setRetryCount] = useState(0);
 
   const { updateDocumentProgress, updateDocumentPageTimes, getDocumentById } = useStudyPlanner();
@@ -71,7 +69,6 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
               if (!(buffer instanceof ArrayBuffer)) {
                 throw new Error('Not an ArrayBuffer');
               }
-              // Create stable copy immediately
               const stable = buffer.slice();
               resolve(stable);
             } catch (err) {
@@ -86,7 +83,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
       // Strategy 2: Direct arrayBuffer() with immediate copy
       async () => {
         const buffer = await file.arrayBuffer();
-        return buffer.slice(); // Create immediate copy
+        return buffer.slice();
       },
       
       // Strategy 3: Fetch blob URL
@@ -99,15 +96,6 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
         } finally {
           URL.revokeObjectURL(url);
         }
-      },
-      
-      // Strategy 4: Uint8Array conversion
-      async () => {
-        const buffer = await file.arrayBuffer();
-        const uint8 = new Uint8Array(buffer);
-        const copy = new Uint8Array(uint8.length);
-        copy.set(uint8);
-        return copy.buffer;
       }
     ];
 
@@ -115,13 +103,11 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
       try {
         const result = await strategies[i]();
         if (result && result.byteLength > 0) {
-          console.log(`✅ Strategy ${i + 1} succeeded`);
           return result;
         }
       } catch (error) {
-        console.warn(`⚠️ Strategy ${i + 1} failed:`, error.message);
         if (i === strategies.length - 1) {
-          throw new Error(`All buffer creation strategies failed. Last error: ${error.message}`);
+          throw new Error(`File processing failed: ${error.message}`);
         }
       }
     }
@@ -149,12 +135,8 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        setProcessingMethod(`Attempt ${attempt}/${maxRetries}`);
-        console.log(`📄 Processing attempt ${attempt}:`, inputFile.name);
-
         const stableBuffer = await createStableArrayBuffer(inputFile);
         
-        // Verify the buffer
         if (!stableBuffer || stableBuffer.byteLength === 0) {
           throw new Error('Created buffer is empty');
         }
@@ -166,17 +148,14 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
           throw new Error('Invalid PDF file format');
         }
 
-        console.log(`✅ File processed successfully (${stableBuffer.byteLength} bytes)`);
         setPdfData(stableBuffer);
         setRetryCount(0);
         return stableBuffer;
 
       } catch (error) {
         lastError = error;
-        console.error(`❌ Attempt ${attempt} failed:`, error.message);
         
         if (attempt < maxRetries) {
-          // Wait before retry
           await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
         }
       }
@@ -190,7 +169,6 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
     if (file) {
       processFile(file)
         .catch(error => {
-          console.error('Final processing error:', error);
           setError(error.message);
         })
         .finally(() => {
@@ -208,7 +186,6 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
 
   // PDF document load success
   const onDocumentLoadSuccess = useCallback(({ numPages }) => {
-    console.log('✅ PDF loaded successfully:', numPages, 'pages');
     setNumPages(numPages);
     setLoading(false);
     setError(null);
@@ -225,15 +202,12 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
 
   // Enhanced error handling
   const onDocumentLoadError = useCallback((error) => {
-    console.error('❌ PDF load error:', error);
-    
     const errorMessage = error.message || error.toString();
     
     if (errorMessage.includes('detached ArrayBuffer') || 
         errorMessage.includes('detached buffer')) {
       setError('File buffer was detached. Attempting to reload...');
       
-      // Auto-retry for buffer errors
       if (retryCount < 2) {
         setRetryCount(prev => prev + 1);
         setTimeout(() => {
@@ -340,13 +314,10 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   if (loading || (!pdfData && !error)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center max-w-2xl">
+        <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <h2 className="text-xl font-semibold text-gray-600 mb-2">Processing PDF...</h2>
-          <p className="text-gray-500 mb-4">{processingMethod}</p>
-          <div className="text-sm text-gray-400">
-            Enhanced buffer protection active
-          </div>
+          <h2 className="text-xl font-semibold text-gray-600 mb-2">Loading PDF...</h2>
+          <p className="text-gray-500">Please wait while we prepare your document</p>
         </div>
       </div>
     );
@@ -356,9 +327,9 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
   if (error && !pdfData) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center max-w-2xl">
+        <div className="text-center max-w-md">
           <AlertTriangle className="h-16 w-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-red-600 mb-2">PDF Processing Error</h2>
+          <h2 className="text-xl font-semibold text-red-600 mb-2">Unable to Load PDF</h2>
           <p className="text-gray-600 mb-4">{error}</p>
           
           <div className="space-y-3">
@@ -379,17 +350,6 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
               </button>
             )}
           </div>
-          
-          <div className="mt-6 p-4 bg-gray-100 rounded-lg text-left">
-            <h3 className="font-semibold text-gray-800 mb-2">Debug Information</h3>
-            <div className="space-y-1 text-xs text-gray-600 font-mono">
-              <div>File: {file?.name || 'None'}</div>
-              <div>Size: {file?.size || 0} bytes</div>
-              <div>Type: {file?.type || 'Unknown'}</div>
-              <div>Retry Count: {retryCount}</div>
-              <div>Worker: {pdfjs.GlobalWorkerOptions.workerSrc}</div>
-            </div>
-          </div>
         </div>
       </div>
     );
@@ -401,34 +361,7 @@ const PDFViewer = ({ file, documentId, topicId, fileName, onBack }) => {
         <div className="flex gap-6">
           {/* Main PDF Area */}
           <div className="flex-1">
-            {error && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-yellow-800 font-medium">Warning</p>
-                    <p className="text-yellow-600 text-sm mt-1">{error}</p>
-                  </div>
-                  <button
-                    onClick={handleRetry}
-                    className="flex items-center space-x-1 px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    <span>Retry</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div className="bg-white rounded-lg shadow-sm">
-              {/* Success Banner */}
-              {numPages && (
-                <div className="bg-green-50 border-b border-green-200 px-6 py-3">
-                  <p className="text-green-800 text-sm">
-                    ✅ PDF loaded successfully with enhanced buffer protection
-                  </p>
-                </div>
-              )}
-
               {/* Toolbar */}
               <div className="border-b px-6 py-4">
                 <div className="flex items-center justify-between mb-3">

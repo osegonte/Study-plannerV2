@@ -1,13 +1,12 @@
 import React from 'react';
-import { Clock, Play, Pause, RotateCcw, Bug } from 'lucide-react';
+import { Clock, Play, Pause, RotateCcw } from 'lucide-react';
 
 const ReadingTimer = ({ 
   isTracking, 
   currentSessionTime, 
   sessionData, 
   onReset,
-  currentPage,
-  debugInfo // Added for debugging
+  currentPage
 }) => {
   
   const formatTime = (seconds) => {
@@ -42,10 +41,6 @@ const ReadingTimer = ({
         <div className="flex items-center space-x-2">
           <Clock className="h-5 w-5 text-blue-600" />
           <h3 className="font-semibold text-gray-900">Reading Timer</h3>
-          {/* Debug indicator */}
-          {process.env.NODE_ENV === 'development' && (
-            <Bug className={`h-3 w-3 ${isTracking ? 'text-green-500' : 'text-gray-400'}`} title="Debug mode active" />
-          )}
         </div>
         
         {sessionData.totalTime > 0 && (
@@ -116,20 +111,6 @@ const ReadingTimer = ({
           </div>
         )}
       </div>
-
-      {/* Debug Information (Development only) */}
-      {process.env.NODE_ENV === 'development' && debugInfo && (
-        <div className="mt-4 pt-3 border-t bg-gray-50 rounded p-2">
-          <div className="text-xs text-gray-600">
-            <div className="font-medium text-gray-700 mb-1">🐛 Debug Info:</div>
-            <div>Status: {isTracking ? '🟢 Active' : '🔴 Stopped'}</div>
-            <div>Last Update: {debugInfo.lastUpdate || 'None'}</div>
-            <div>Current Page: {debugInfo.currentPage || 'None'}</div>
-            <div>Session Time: {currentSessionTime}s</div>
-            <div>Total Pages: {sessionData.pagesRead}</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

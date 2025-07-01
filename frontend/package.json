@@ -19,9 +19,7 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "start:dev": "REACT_APP_ENV=development react-scripts start",
-    "setup:phase1": "echo 'Phase 1 setup complete! Check the new components.'"
+    "eject": "react-scripts eject"
   },
   "eslintConfig": {
     "extends": [
