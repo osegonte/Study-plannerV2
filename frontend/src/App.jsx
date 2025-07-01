@@ -277,3 +277,6 @@ function App() {
 }
 
 export default App;
+
+// Ensure test data functions are available globally
+import './utils/testData.js';

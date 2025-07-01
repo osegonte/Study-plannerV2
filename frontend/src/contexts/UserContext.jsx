@@ -14,16 +14,27 @@ export const UserProvider = ({ children }) => {
   const [currentUser] = useState({ 
     id: 'demo-user',
     username: 'demo', 
-    email: 'demo@example.com' 
+    email: 'demo@example.com',
+    profile: {
+      displayName: 'Demo User',
+      school: 'Demo University'
+    }
   });
+  
   const [userProfile] = useState({
     displayName: 'Demo User',
     school: 'Demo University'
   });
+  
   const [isAuthenticated] = useState(true);
 
-  const createAccount = () => console.log('Account created');
-  const logout = () => console.log('Logged out');
+  const createAccount = (data) => {
+    console.log('Account created:', data);
+  };
+  
+  const logout = () => {
+    console.log('Logged out');
+  };
 
   return (
     <UserContext.Provider value={{ 

@@ -219,3 +219,27 @@ if (typeof window !== 'undefined') {
   window.clearTestData = clearTestData;
   window.injectAdvancedTestData = injectAdvancedTestData;
 }
+
+// Ensure global access with proper error handling
+if (typeof window !== 'undefined') {
+  window.injectTestData = () => {
+    try {
+      injectTestData();
+    } catch (error) {
+      console.error('Error injecting test data:', error);
+    }
+  };
+  
+  window.clearTestData = () => {
+    try {
+      clearTestData();
+    } catch (error) {
+      console.error('Error clearing test data:', error);
+    }
+  };
+  
+  // Make functions available immediately
+  console.log('✅ Test data functions available:');
+  console.log('   window.injectTestData()');
+  console.log('   window.clearTestData()');
+}
